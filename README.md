@@ -19,9 +19,7 @@ Some of the pieces to tackle:
 
 ## How to get started
 
-This excercise will work best if test driven. 
-
-A good place to start is with an API for creating database structures. Here are some rough ideas...
+This excercise will work best if test driven. A good place to start is with an API for creating database structures. Here are some rough ideas on a path forward...
 
 ### Creating databases
 Your database engine needs to support creating database catalogs:
