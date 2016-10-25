@@ -1,7 +1,7 @@
 # NashFP's "build your own relational database" playground
 Let's write a database! 
 
-More specifically, let's write a relational database management system-- an oldschool, SQL-blooded, table thumping, Boyce–Codd saluting database. You'll know you're done when you have that warm, vintage feeling that only comes from tables with static columns, primary keys, indexes (clustered and non-clustered), and foreign keys constraints. 
+More specifically, let's write a relational database management system (RDBMS)-- an oldschool, SQL-blooded, table thumping, Boyce–Codd saluting database. You'll know you're done when you have that warm, vintage feeling that only comes from tables with static columns, primary keys, indexes (clustered and non-clustered), and foreign keys constraints. 
 
 ## High-level Parts:
 
