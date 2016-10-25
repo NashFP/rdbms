@@ -71,11 +71,15 @@ query db_name sql
 query "my_db", "SELECT Id, LastName FROM Person"
 ```
 
+### Next steps
 From here you have a launchpad to make things more real. Examples:
-* Support `WHERE`
+* Support `WHERE` 
 * Support `ORDER BY`
 * Support `INNER JOIN`
-
+* Enforce primary keys
+* Enforce foreign key constraints
+* Leverage indexes for queries
+* Support clustered and non-clustered indexes
 
 ## Write your own
 
