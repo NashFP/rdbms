@@ -1,0 +1,15 @@
+{
+  "name": "nashfp-rdbms-jorendorff-nodejs",
+  "version": "0.0.0",
+  "description": "toy library for playing with csv tables",
+  "main": "sample_queries.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Jason Orendorff",
+  "license": "MIT",
+  "dependencies": {
+    "cartesian-product": "^2.1.2",
+    "csv-parse": "^1.2.0"
+  }
+}
