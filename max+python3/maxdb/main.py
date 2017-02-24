@@ -10,6 +10,7 @@ from .constants import (
 from .exceptions import (
     DatabaseDoesNotExist,
     DatabaseExists,
+    MissingColumns,
     TableDoesNotExist,
     TableExists,
     UnknownColumnNames,
@@ -73,6 +74,10 @@ def insert(db_name, table_name, row):
         if unknown_column_names:
             raise UnknownColumnNames(column_names=unknown_column_names)
 
+        missing_columns = set(table_columns) - set(row)
+        if missing_columns:
+            raise MissingColumns(missing_columns=missing_columns)
+
         ordered_keys = sorted(row.keys(), key=lambda k: table_columns.index(k))
         db[table_name][ROWS].append([row[key] for key in ordered_keys])
 
@@ -95,6 +100,7 @@ def select(db_name, table_name, columns):
 
         # Make sure it is a known column name
         unknown_column_names = set(columns) - set(table_columns)
+
         if unknown_column_names:
             raise UnknownColumnNames(column_names=unknown_column_names)
 

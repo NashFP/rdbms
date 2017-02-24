@@ -6,6 +6,12 @@ class DatabaseExists(Exception):
     pass
 
 
+class MissingColumns(Exception):
+    def __init__(self, missing_columns, *args, **kwargs):
+        self.missing_columns = missing_columns
+        super(MissingColumns, self).__init__(*args, **kwargs)
+
+
 class TableDoesNotExist(Exception):
     pass
 

@@ -13,6 +13,7 @@ from ..exceptions import (
     DatabaseDoesNotExist,
     DatabaseExists,
     TableExists,
+    MissingColumns,
 )
 from ..main import (
     create_database,
@@ -88,6 +89,18 @@ def test_insert():
         with open(get_db_file_name(DB_NAME), 'r') as f:
             db = json.load(f)
             assert db == {TABLE_NAME: {COLUMNS: columns, ROWS: [[row['id'], row['created'], row['name']]]}}
+    finally:
+        drop_database(DB_NAME)
+
+
+def test_insert_missing_columns():
+    create_database(DB_NAME)
+    columns = ['id', 'created', 'name']
+    create_table(DB_NAME, TABLE_NAME, columns)
+    row = {'id': 1, 'name': 'High Quality Gifs'}
+    try:
+        with pytest.raises(MissingColumns):
+            insert(DB_NAME, TABLE_NAME, row)
     finally:
         drop_database(DB_NAME)
 
