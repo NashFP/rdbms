@@ -23,33 +23,43 @@ defmodule Sql do
 
   @doc """
   Break the given SQL string `s` into tokens.
-  Return the list of tokens, as strings.
+
+  Return the list of tokens. SQL keywords, operators, etc. are represented
+  as Elixir keywords. Identifiers and literals are represented as pairs,
+  `{:token_type, value}`. The token types are `:identifier`, `:number`, and
+  `:string`.
 
   ## Examples
 
       iex> Sql.tokenize("SELECT * FROM Student")
-      ["SELECT", "*", "FROM", "Student"]
+      [:select, :*, :from, {:identifier, "Student"}]
 
   """
   def tokenize(s) do
     Enum.map(Regex.scan(~r/(?:\s*)(\w+|[0-9]\w+|'(?:[^']|'')*'|.)(?:\s*)/,
                         s, capture: :all_but_first),
-             &hd/1)
+             &Sql.match_to_token/1)
   end
 
   @doc """
-  Examine a token and tell what type it is.
+  Examine a token regex match and turn it into a token.
 
   ## Examples
-      iex> Sql.token_type("select")
+      iex> Sql.match_to_token(["Select"])
       :select
-      iex> Enum.map(Sql.tokenize("SELECT * FROM Student"), &Sql.token_type/1)
-      [:select, :star, :from, :identifier]
+      iex> Sql.match_to_token(["Student"])
+      {:identifier, "Student"}
+      iex> Sql.match_to_token(["'"])
+      {:error, "unrecognized character: '"}
+
   """
-  def token_type(token) do
-    case String.downcase(token) do
+  def match_to_token([token_str]) do
+    case String.downcase(token_str) do
       "select" -> :select
-      "*" -> :star
+      "*" -> :*
+      "," -> :','
+      "(" -> :'('
+      ")" -> :')'
       "from" -> :from
       "as" -> :as
       "where" -> :where
@@ -67,9 +77,11 @@ defmodule Sql do
       "between" -> :between
       _ ->
         cond do
-          String.match?(token, ~r/^[0-9]/) -> :number
-          String.match?(token, ~r/^[a-z]/i) -> :identifier
-          true -> :error
+          String.match?(token_str, ~r/^[0-9]/) -> {:number, token_str}
+          String.match?(token_str, ~r/^[a-z]/i) -> {:identifier, token_str}
+          String.match?(token_str, ~r/^'.*'$/) ->
+            {:string, token_str} # TODO: parse string
+          true -> {:error, "unrecognized character: #{token_str}"}
         end
     end
   end
