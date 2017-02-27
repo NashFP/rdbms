@@ -126,7 +126,7 @@ end
 defmodule SqlExpr do
   def is_aggregate?(expr) do
     case expr do
-      {:apply, fnname, _} -> true
+      {:apply, _, _} -> true
       _ -> false
     end
   end
@@ -134,7 +134,7 @@ defmodule SqlExpr do
   def eval_aggregate(group, expr) do
     case expr do
       {:apply, fnname, arg_exprs} ->
-        arg_vals = Enum.map(group, fn(row) ->
+        _ = Enum.map(group, fn(row) ->
           Enum.map(arg_exprs, fn(expr) -> eval(row, expr) end)
         end)
         case String.upcase(fnname) do
