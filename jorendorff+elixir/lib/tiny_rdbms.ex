@@ -28,9 +28,14 @@ defmodule TinyRdbms do
 
     # Evalute WHERE clause.
     where_expr = ast.where
-    results = Enum.filter(results, fn(row) ->
-      SqlValue.is_truthy?(SqlExpr.eval(row, where_expr))
-    end)
+    results =
+      if where_expr == nil do
+        results
+      else
+        Enum.filter(results, fn(row) ->
+          SqlValue.is_truthy?(SqlExpr.eval(row, where_expr))
+        end)
+      end
 
     # Execute SELECT clause.
     select_exprs = ast.select
