@@ -29,34 +29,25 @@ defmodule TinyRdbms do
     # Evalute WHERE clause.
     where_expr = ast.where
     results = Enum.filter(results, fn(row) ->
-      SqlValue.is_truthy?(eval_expr(row, where_expr))
+      SqlValue.is_truthy?(SqlExpr.eval(row, where_expr))
     end)
 
     # Execute SELECT clause.
     select_exprs = ast.select
-    results = Enum.map(results, fn(row) ->
-      # For each row, evaluate each selected expression.
-      Enum.map(select_exprs, fn(expr) -> eval_expr(row, expr) end)
-    end)
+    results =
+      if Enum.any?(select_exprs, &SqlExpr.is_aggregate?/1) do
+        # Implicitly group all rows into one big group, if selecting an aggregate.
+        [Enum.map(select_exprs, fn(expr) -> SqlExpr.eval_aggregate(results, expr) end)]
+      else
+        Enum.map(results, fn(row) ->
+          # For each row, evaluate each selected expression.
+          Enum.map(select_exprs, fn(expr) -> SqlExpr.eval(row, expr) end)
+        end)
+      end
 
     results
   end
 
-  defp eval_expr(row, expr) do
-    case expr do
-      {:identifier, x} -> row[x]
-      {:number, n} -> n
-      {:string, s} -> s
-      {:is_null, subexpr} ->
-        val = eval_expr(row, subexpr)
-        SqlValue.is_null?(val)
-      {:=, left_expr, right_expr} ->
-        left_val = eval_expr(row, left_expr)
-        right_val = eval_expr(row, right_expr)
-        SqlValue.equals?(left_val, right_val)
-      _ -> raise ArgumentError, message: "internal error: unrecognized expr #{inspect(expr)}"
-    end
-  end
 end
 
 defmodule SqlValue do
@@ -107,9 +98,11 @@ defmodule SqlValue do
       false
       iex> SqlValue.equals?(3, "3")
       true
-      iex> SqlValue.equals(nil, "hello")
+      iex> SqlValue.equals?(10, "10")
+      true
+      iex> SqlValue.equals?(nil, "hello")
       nil
-      iex> SqlValue.equals(nil, nil)
+      iex> SqlValue.equals?(nil, nil)
       nil
 
   """
@@ -123,6 +116,48 @@ defmodule SqlValue do
          to_string(left) == to_string(right))
      end
   end
+end
+
+defmodule SqlExpr do
+  def is_aggregate?(expr) do
+    case expr do
+      {:apply, fnname, _} -> true
+      _ -> false
+    end
+  end
+
+  def eval_aggregate(group, expr) do
+    case expr do
+      {:apply, fnname, arg_exprs} ->
+        arg_vals = Enum.map(group, fn(row) ->
+          Enum.map(arg_exprs, fn(expr) -> eval(row, expr) end)
+        end)
+        case String.upcase(fnname) do
+          "COUNT" -> length(group)
+          _ -> raise ArgumentError, message: "internal error: unknown function #{inspect(fnname)}"
+        end
+      _ ->
+        eval(hd(group), expr)
+    end
+  end
+
+  def eval(row, expr) do
+    case expr do
+      {:identifier, x} -> row[x]
+      {:number, n} -> n
+      {:string, s} -> s
+      {:is_null, subexpr} ->
+        val = eval(row, subexpr)
+        SqlValue.is_null?(val)
+      {:=, left_expr, right_expr} ->
+        left_val = eval(row, left_expr)
+        right_val = eval(row, right_expr)
+        SqlValue.equals?(left_val, right_val)
+      :* -> row
+      _ -> raise ArgumentError, message: "internal error: unrecognized expr #{inspect(expr)}"
+    end
+  end
+
 end
 
 
@@ -225,9 +260,24 @@ defmodule Sql do
 
   defp parse_prim!(sql) do
     case sql do
-      [{:identifier, _} | tail] -> {hd(sql), tail}
-      [{:number, _} | tail] -> {hd(sql), tail}
-      [{:string, _} | tail] -> {hd(sql), tail}
+      [{:identifier, fnname}, :'(' | rest] ->
+        fnname_up = String.upcase(fnname)
+        {args, rest} = parse_exprs!(rest)
+        case fnname_up do
+          "COUNT" ->
+            if length(args) != 1 do
+              raise ArgumentError, message: "COUNT() function expects 1 argument, got #{length(args)}"
+            end
+          _ -> raise ArgumentError, message: "unrecognized function #{inspect(fnname)}"
+        end
+        case rest do
+          [:')' | rest] -> {{:apply, fnname_up, args}, rest}
+          _ -> raise ArgumentError, message: "')' expected after function arguments"
+        end
+      [{:identifier, _} | rest] -> {hd(sql), rest}
+      [{:number, _} | rest] -> {hd(sql), rest}
+      [{:string, _} | rest] -> {hd(sql), rest}
+      [:* | rest] -> {hd(sql), rest}
       _ -> raise ArgumentError, message: "identifier or literal expected"
     end
   end
@@ -263,8 +313,8 @@ defmodule Sql do
 
   defp parse_clause!({ast, sql}, keyword, parser, keywords \\ []) do
     case sql do
-      [^keyword | tail] ->
-        {clause_ast, rest} = parser.(tail)
+      [^keyword | rest] ->
+        {clause_ast, rest} = parser.(rest)
         {Map.put(ast, keyword, clause_ast), rest}
       _ ->
         if Keyword.get(keywords, :required, false) do
@@ -277,8 +327,8 @@ defmodule Sql do
 
   defp parse_clause_2!({ast, sql}, kw1, kw2, parser) do
     case sql do
-      [^kw1, ^kw2 | tail] ->
-        {clause_ast, rest} = parser.(tail)
+      [^kw1, ^kw2 | rest] ->
+        {clause_ast, rest} = parser.(rest)
         {Map.put(ast, kw1, clause_ast), rest}
       _ ->
         {Map.put(ast, kw1, :nil), sql}

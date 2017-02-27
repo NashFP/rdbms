@@ -24,7 +24,14 @@ defmodule TinyRdbmsTest do
 
         actual_answer = TinyRdbms.run_query(database, query)
 
-        assert actual_answer == expected_answer
+        for {actual_row, expected_row} <- Enum.zip(actual_answer, expected_answer) do
+          for {actual_val, expected_val} <- Enum.zip(actual_row, expected_row) do
+            if !SqlValue.equals?(actual_val, expected_val) &&
+               !(actual_val == nil && expected_val == nil) do
+              assert actual_answer == expected_answer
+            end
+          end
+        end
       end
     end
   end
@@ -33,4 +40,7 @@ end
 defmodule SqlTest do
   use ExUnit.Case
   doctest Sql
+  doctest SqlValue
+  doctest SqlExpr
 end
+
