@@ -33,52 +33,61 @@ defmodule Sql do
 
       iex> Sql.tokenize("SELECT * FROM Student")
       [:select, :*, :from, {:identifier, "Student"}]
+      iex> Sql.tokenize("WHERE name = '")
+      [:where, {:identifier, "name"}, :=, {:error, "unrecognized character: '"}]
 
   """
   def tokenize(s) do
-    Enum.map(Regex.scan(~r/(?:\s*)(\w+|[0-9]\w+|'(?:[^']|'')*'|.)(?:\s*)/,
-                        s, capture: :all_but_first),
-             &Sql.match_to_token/1)
+    token_re = ~r/(?:\s*)(\w+|[0-9]\w+|'(?:[^']|'')*'|>=|<=|<>|.)(?:\s*)/
+    Regex.scan(token_re, s, capture: :all_but_first) |>
+      Enum.map(&match_to_token/1)
   end
 
-  @doc """
-  Examine a token regex match and turn it into a token.
-
-  ## Examples
-      iex> Sql.match_to_token(["Select"])
-      :select
-      iex> Sql.match_to_token(["Student"])
-      {:identifier, "Student"}
-      iex> Sql.match_to_token(["'"])
-      {:error, "unrecognized character: '"}
-
-  """
-  def match_to_token([token_str]) do
+  # Convert a single token regex match into a token.
+  defp match_to_token([token_str]) do
     case String.downcase(token_str) do
+      "all" -> :all
+      "and" -> :and
+      "as" -> :as
+      "asc" -> :asc
+      "between" -> :between
+      "by" -> :by
+      "desc" -> :desc
+      "distinct" -> :distinct
+      "exists" -> :exists
+      "from" -> :from
+      "group" -> :group
+      "having" -> :having
+      "insert" -> :insert
+      "is" -> :is
+      "not" -> :not
+      "null" -> :null
+      "or" -> :or
+      "order" -> :order
       "select" -> :select
+      "set" -> :set
+      "union" -> :union
+      "update" -> :update
+      "values" -> :values
+      "where" -> :where
       "*" -> :*
+      "." -> :.
       "," -> :','
       "(" -> :'('
       ")" -> :')'
-      "from" -> :from
-      "as" -> :as
-      "where" -> :where
-      "order" -> :order
-      "by" -> :by
-      "asc" -> :asc
-      "desc" -> :desc
-      "group" -> :group
-      "having" -> :having
-      "null" -> :null
-      "is" -> :is
-      "not" -> :not
-      "and" -> :and
-      "or" -> :or
-      "between" -> :between
+      "=" -> :=
+      ">=" -> :'>='
+      "<=" -> :'<='
+      ">" -> :'>'
+      "<" -> :'<'
+      "<>" -> :'<>'
       _ ->
         cond do
-          String.match?(token_str, ~r/^[0-9]/) -> {:number, token_str}
-          String.match?(token_str, ~r/^[a-z]/i) -> {:identifier, token_str}
+          String.match?(token_str, ~r/^[0-9]/) ->
+            {n, ""} = Integer.parse(token_str)
+            {:number, n}
+          String.match?(token_str, ~r/^[a-z]/i) ->
+            {:identifier, token_str}
           String.match?(token_str, ~r/^'.*'$/) ->
             {:string, token_str} # TODO: parse string
           true -> {:error, "unrecognized character: #{token_str}"}
