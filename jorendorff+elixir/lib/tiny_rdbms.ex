@@ -29,7 +29,7 @@ defmodule TinyRdbms do
     # Evalute WHERE clause.
     where_expr = ast.where
     results = Enum.filter(results, fn(row) ->
-      is_sql_value_truthy?(eval_expr(row, where_expr))
+      SqlValue.is_truthy?(eval_expr(row, where_expr))
     end)
 
     # Execute SELECT clause.
@@ -49,28 +49,79 @@ defmodule TinyRdbms do
       {:string, s} -> s
       {:is_null, subexpr} ->
         val = eval_expr(row, subexpr)
-        is_sql_value_null?(val)
+        SqlValue.is_null?(val)
       {:=, left_expr, right_expr} ->
         left_val = eval_expr(row, left_expr)
         right_val = eval_expr(row, right_expr)
-        sql_equals?(left_val, right_val)
+        SqlValue.equals?(left_val, right_val)
       _ -> raise ArgumentError, message: "internal error: unrecognized expr #{inspect(expr)}"
     end
   end
+end
 
-  defp is_sql_value_null?(v) do
+defmodule SqlValue do
+  @doc """
+  True if `v` is a null value.
+
+  Because the CSV files don't include any information about the column types,
+  we lamely treat empty strings as nulls.
+  """
+  def is_null?(v) do
     v == :nil || v == ""
   end
 
-  defp is_sql_value_truthy?(v) do
+  @doc """
+  Return true if SQL considers the value `v` to be a true value.
+
+  ## Examples
+
+      iex> SqlValue.is_truthy?(true)
+      true
+      iex> SqlValue.is_truthy?(0)
+      false
+      iex> SqlValue.is_truthy?(2)
+      true
+      iex> SqlValue.is_truthy?(nil)
+      false
+
+  """
+  def is_truthy?(v) do
     v == true || (is_integer(v) && v != 0)
   end
 
-  defp sql_equals?(left, right) do
-    left == right ||
-      ((is_binary(left) || is_integer(left)) &&
-       (is_binary(right) || is_integer(right)) &&
-       to_string(left) == to_string(right))
+  @doc """
+  Return true if `left` and `right` are considered equal.
+
+  As the SQL standard requires, if either `left` or `right` is null, the answer
+  is `nil` rather than `false` or `true`.
+
+  Because the CSV files don't include any information about the column types,
+  we lamely treat everything as a string, and this means we have to lamely
+  consider the number `3` equal to the string `"3"`.
+
+  ## Examples
+
+      iex> SqlValue.equals?(3, 3)
+      true
+      iex> SqlValue.equals?(3, 5)
+      false
+      iex> SqlValue.equals?(3, "3")
+      true
+      iex> SqlValue.equals(nil, "hello")
+      nil
+      iex> SqlValue.equals(nil, nil)
+      nil
+
+  """
+  def equals?(left, right) do
+     if is_null?(left) || is_null?(right) do
+       nil
+     else
+      left == right ||
+        ((is_binary(left) || is_integer(left)) &&
+         (is_binary(right) || is_integer(right)) &&
+         to_string(left) == to_string(right))
+     end
   end
 end
 
