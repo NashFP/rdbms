@@ -46,12 +46,20 @@ defmodule TinyRdbms do
     case expr do
       {:identifier, x} -> row[x]
       {:number, n} -> n
+      {:string, s} -> s
+      {:is_null, subexpr} ->
+        val = eval_expr(row, subexpr)
+        is_sql_value_null?(val)
       {:=, left_expr, right_expr} ->
         left_val = eval_expr(row, left_expr)
         right_val = eval_expr(row, right_expr)
         sql_equals?(left_val, right_val)
       _ -> raise ArgumentError, message: "internal error: unrecognized expr #{inspect(expr)}"
     end
+  end
+
+  defp is_sql_value_null?(v) do
+    v == :nil || v == ""
   end
 
   defp is_sql_value_truthy?(v) do
@@ -137,7 +145,7 @@ defmodule Sql do
           String.match?(token_str, ~r/^[a-z]/i) ->
             {:identifier, token_str}
           String.match?(token_str, ~r/^'.*'$/) ->
-            {:string, token_str} # TODO: parse string
+            {:string, String.slice(token_str, 1..-2)} # TODO: handle doubled quotes
           true -> {:error, "unrecognized character: #{token_str}"}
         end
     end
@@ -168,7 +176,8 @@ defmodule Sql do
     case sql do
       [{:identifier, _} | tail] -> {hd(sql), tail}
       [{:number, _} | tail] -> {hd(sql), tail}
-      _ -> raise ArgumentError, message: "columns expected"
+      [{:string, _} | tail] -> {hd(sql), tail}
+      _ -> raise ArgumentError, message: "identifier or literal expected"
     end
   end
 
@@ -178,6 +187,8 @@ defmodule Sql do
       [:= | rest] ->
         {rhs, rest} = parse_prim!(rest)
         {{:=, prim, rhs}, rest}
+      [:is, :null | rest] ->
+        {{:is_null, prim}, rest}
       _ -> {prim, rest}
     end
   end
