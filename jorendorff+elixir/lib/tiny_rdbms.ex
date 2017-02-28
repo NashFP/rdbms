@@ -78,11 +78,15 @@ defmodule SqlValue do
       iex> SqlValue.is_truthy?(2)
       true
       iex> SqlValue.is_truthy?(nil)
-      false
+      nil
 
   """
   def is_truthy?(v) do
-    v == true || (is_integer(v) && v != 0)
+    case v do
+      true -> true
+      nil -> nil
+      v -> is_integer(v) && v != 0
+    end
   end
 
   @doc """
@@ -121,6 +125,14 @@ defmodule SqlValue do
          to_string(left) == to_string(right))
      end
   end
+
+  def not(v) do
+    case is_truthy?(v) do
+      true -> false
+      false -> true
+      nil -> nil
+    end
+  end
 end
 
 defmodule SqlExpr do
@@ -154,10 +166,14 @@ defmodule SqlExpr do
       {:is_null, subexpr} ->
         val = eval(row, subexpr)
         SqlValue.is_null?(val)
-      {:=, left_expr, right_expr} ->
+      {binary_op, left_expr, right_expr} ->
         left_val = eval(row, left_expr)
         right_val = eval(row, right_expr)
-        SqlValue.equals?(left_val, right_val)
+        case binary_op do
+          := -> SqlValue.equals?(left_val, right_val)
+          :'<>' -> SqlValue.not(SqlValue.equals?(left_val, right_val))
+          _ -> raise ArgumentError, message: "internal error: bad op #{inspect(binary_op)}"
+        end
       :* -> row
       _ -> raise ArgumentError, message: "internal error: unrecognized expr #{inspect(expr)}"
     end
@@ -293,6 +309,9 @@ defmodule Sql do
       [:= | rest] ->
         {rhs, rest} = parse_prim!(rest)
         {{:=, prim, rhs}, rest}
+      [:'<>' | rest] ->
+        {rhs, rest} = parse_prim!(rest)
+        {{:'<>', prim, rhs}, rest}
       [:is, :null | rest] ->
         {{:is_null, prim}, rest}
       _ -> {prim, rest}
