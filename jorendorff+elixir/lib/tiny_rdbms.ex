@@ -126,11 +126,29 @@ defmodule SqlValue do
      end
   end
 
-  def not(v) do
+  def logical_not(v) do
     case is_truthy?(v) do
       true -> false
       false -> true
       nil -> nil
+    end
+  end
+
+  def logical_and(a, b) do
+    case {is_truthy?(a), is_truthy?(b)} do
+      {nil, _} -> nil
+      {_, nil} -> nil
+      {true, true} -> true
+      _ -> false
+    end
+  end
+
+  def logical_or(a, b) do
+    case {is_truthy?(a), is_truthy?(b)} do
+      {nil, _} -> nil
+      {_, nil} -> nil
+      {false, false} -> false
+      _ -> true
     end
   end
 end
@@ -171,7 +189,9 @@ defmodule SqlExpr do
         right_val = eval(row, right_expr)
         case binary_op do
           := -> SqlValue.equals?(left_val, right_val)
-          :'<>' -> SqlValue.not(SqlValue.equals?(left_val, right_val))
+          :'<>' -> SqlValue.logical_not(SqlValue.equals?(left_val, right_val))
+          :and -> SqlValue.logical_and(left_val, right_val)
+          :or -> SqlValue.logical_or(left_val, right_val)
           _ -> raise ArgumentError, message: "internal error: bad op #{inspect(binary_op)}"
         end
       :* -> row
@@ -304,6 +324,26 @@ defmodule Sql do
   end
 
   defp parse_expr!(sql) do
+    {lhs, rest} = parse_and_expr!(sql)
+    case rest do
+      [:or | rest] ->
+        {rhs, rest} = parse_expr!(rest)
+        {{:or, lhs, rhs}, rest}
+      _ -> {lhs, rest}
+    end
+  end
+
+  defp parse_and_expr!(sql) do
+    {lhs, rest} = parse_compare_expr!(sql)
+    case rest do
+      [:and |rest] ->
+        {rhs, rest} = parse_and_expr!(rest)
+        {{:and, lhs, rhs}, rest}
+      _ -> {lhs, rest}
+    end
+  end
+
+  defp parse_compare_expr!(sql) do
     {prim, rest} = parse_prim!(sql)
     case rest do
       [:= | rest] ->
