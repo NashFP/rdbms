@@ -131,6 +131,7 @@ defmodule RowSet do
            # hack: guess type from column name
            type = cond do
              String.ends_with?(name, "Id") -> :int
+             String.ends_with?(name, "Price") -> :num
              true -> :str
            end
            {name, type}
@@ -237,6 +238,7 @@ defmodule SqlValue do
     {n, ""} = Integer.parse(string)
     n
   end
+  def from_string(:num, string), do: Decimal.new(string)
   def from_string(:str, string), do: string
   def from_string(:bool, "true"), do: true
   def from_string(:bool, "false"), do: false
@@ -257,18 +259,24 @@ defmodule SqlExpr do
       {:identifier, name} ->
         {name, Columns.get_type(columns, name)}
       _ ->
-        type = case expr do
-          {:number, _} -> :int
-          {:apply, "COUNT", _} -> :int  # for now, the only function is COUNT()
-          {:string, _} -> :str
-          {:is_null, _} -> :bool
-          {:=, _, _} -> :bool
-          {:<>, _, _} -> :bool
-          {:and, _, _} -> :bool
-          {:or, _, _} -> :bool
-          :* -> :row
-          _ -> raise ArgumentError, message: "internal error: unrecognized expr #{inspect(expr)}"
-        end
+        type =
+          case expr do
+            {:number, x} ->
+              if Decimal.decimal? x do
+                :num
+              else
+                :int
+              end
+            {:apply, "COUNT", _} -> :int  # for now, the only function is COUNT()
+            {:string, _} -> :str
+            {:is_null, _} -> :bool
+            {:=, _, _} -> :bool
+            {:<>, _, _} -> :bool
+            {:and, _, _} -> :bool
+            {:or, _, _} -> :bool
+            :* -> :row
+            _ -> raise ArgumentError, message: "internal error: unrecognized expr #{inspect(expr)}"
+          end
         {:nil, type}  # column has no name
     end
   end
@@ -330,10 +338,11 @@ defmodule Sql do
       [:select, :*, :from, {:identifier, "Student"}]
       iex> Sql.tokenize("WHERE name = '")
       [:where, {:identifier, "name"}, :=, {:error, "unrecognized character: '"}]
-
+      iex> Sql.tokenize("1 <> 0.99")
+      [{:number, 1}, :<>, {:number, Decimal.new("0.99")}]
   """
   def tokenize(s) do
-    token_re = ~r/(?:\s*)(\w+|[0-9]\w+|'(?:[^']|'')*'|>=|<=|<>|.)(?:\s*)/
+    token_re = ~r/(?:\s*)([0-9](?:\w|\.)*|\w+|'(?:[^']|'')*'|>=|<=|<>|.)(?:\s*)/
     Regex.scan(token_re, s, capture: :all_but_first) |>
       Enum.map(&match_to_token/1)
   end
@@ -379,8 +388,12 @@ defmodule Sql do
       _ ->
         cond do
           String.match?(token_str, ~r/^[0-9]/) ->
-            {n, ""} = Integer.parse(token_str)
-            {:number, n}
+            if String.contains?(token_str, ".") do
+              {:number, Decimal.new(token_str)}
+            else
+              {n, ""} = Integer.parse(token_str)
+              {:number, n}
+            end
           String.match?(token_str, ~r/^[a-z]/i) ->
             {:identifier, token_str}
           String.match?(token_str, ~r/^'.*'$/) ->
