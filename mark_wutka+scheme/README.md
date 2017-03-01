@@ -25,10 +25,14 @@ But, how do we filter a subset of the tables using the WHERE clause?
 When we first filter the album table, what if we replace any column
 comparisons with true if the table hasn't been processed yet? That is,
 when we filter album, the WHERE clause effectively becomes:
+```sql
 WHERE artist.Name="AC/DC" AND true AND true
+```
 
 Then, once we join with artist, the WHERE clause becomes:
-WHER artist.Name="AC/DC" AND artist.ArtistId=album.ArtistId AND true
+```sql
+WHERE artist.Name="AC/DC" AND artist.ArtistId=album.ArtistId AND true
+```
 
 And finally after bring in track, the full WHERE clause is evaluated
 against the remaining rows.
