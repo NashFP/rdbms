@@ -62,6 +62,17 @@ An optimization that could be added would be to look for comparisons
 between a column and constant, and move the tables with those columns
 to the beginning of the list.
 
+## Installation Instructions
+
+This program uses some extension libraries that you may have to install
+in Chicken Scheme. You may have to do:
+
+```bash
+sudo chicken-install lookup-table
+sudo chicken-install data-structures
+sudo chicken-install csv
+```
+
 ## To Do
 
 It would be nice to create a SQL query parser that translates a SELECT
