@@ -39,35 +39,46 @@ defmodule TinyRdbms do
     #IO.inspect(ast)
     [table_name] = ast.from
 
-    results = Map.get(database, String.downcase(table_name))
-
-    # Evalute WHERE clause.
-    where_expr = ast.where
-    results =
-      if where_expr == nil do
-        results
-      else
-        Enum.filter(results, fn(row) ->
-          SqlValue.is_truthy?(SqlExpr.eval(row, where_expr))
-        end)
-      end
-
-    # Execute SELECT clause.
-    select_exprs = ast.select
-    results =
-      if Enum.any?(select_exprs, &SqlExpr.is_aggregate?/1) do
-        # Implicitly group all rows into one big group, if selecting an aggregate.
-        [Enum.map(select_exprs, fn(expr) -> SqlExpr.eval_aggregate(results, expr) end)]
-      else
-        Enum.map(results, fn(row) ->
-          # For each row, evaluate each selected expression.
-          Enum.map(select_exprs, fn(expr) -> SqlExpr.eval(row, expr) end)
-        end)
-      end
-
-    results
+    Map.get(database, String.downcase(table_name))
+      |> apply_where(ast.where)
+      |> apply_order(ast.order)
+      |> apply_select(ast.select)
   end
 
+  # Evaluate WHERE clause.
+  defp apply_where(data, :nil) do
+    data
+  end
+  defp apply_where(data, where_expr) do
+    Enum.filter(data, fn(row) ->
+      SqlValue.is_truthy?(SqlExpr.eval(row, where_expr))
+    end)
+  end
+
+  # Evaluate SELECT clause (projection).
+  defp apply_select(data, select_exprs) do
+    if Enum.any?(select_exprs, &SqlExpr.is_aggregate?/1) do
+      # Implicitly group all rows into one big group, if selecting an aggregate.
+      [Enum.map(select_exprs, fn(expr) -> SqlExpr.eval_aggregate(data, expr) end)]
+    else
+      Enum.map(data, fn(row) ->
+        # For each row, evaluate each selected expression.
+        Enum.map(select_exprs, fn(expr) -> SqlExpr.eval(row, expr) end)
+      end)
+    end
+  end
+
+  # Apply ORDER BY clause to the result set.
+  defp apply_order(data, :nil) do
+    data
+  end
+  defp apply_order(data, order) do
+    Enum.sort_by(data, fn row ->
+      Enum.map(order, fn expr ->
+        SqlExpr.eval(row, expr)
+      end)
+    end)
+  end
 end
 
 defmodule SqlValue do
