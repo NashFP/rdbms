@@ -22,7 +22,7 @@ defmodule TinyRdbmsTest do
           CSV.decode() |>
           Enum.to_list()
 
-        actual_answer = TinyRdbms.run_query(database, query)
+        actual_answer = TinyRdbms.run_query(database, query) |> RowSet.rows()
 
         for {actual_row, expected_row} <- Enum.zip(actual_answer, expected_answer) do
           for {actual_val, expected_val} <- Enum.zip(actual_row, expected_row) do

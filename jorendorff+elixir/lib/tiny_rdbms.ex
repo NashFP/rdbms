@@ -3,20 +3,14 @@ defmodule TinyRdbms do
   Documentation for TinyRdbms.
   """
 
-  def load_table(filename) do
-    File.stream!(filename) |>
-      CSV.decode(headers: true) |>
-      Enum.to_list()
-  end
-
   def load(dir) do
-    File.ls!(dir) |>
-      Enum.filter(fn(f) -> String.ends_with?(f, ".csv") end) |>
-      Enum.map(fn(f) ->
+    File.ls!(dir)
+      |> Enum.filter(fn(f) -> String.ends_with?(f, ".csv") end)
+      |> Enum.map(fn(f) ->
         {String.downcase(String.slice(f, 0..-5)),
-         TinyRdbms.load_table(Path.join(dir, f))}
-      end) |>
-      Enum.reduce(%{}, fn({k, v}, db) -> Map.put(db, k, v) end)
+         RowSet.load!(Path.join(dir, f))}
+      end)
+      |> Enum.into(%{})
   end
 
   def repl(dir) do
@@ -49,35 +43,98 @@ defmodule TinyRdbms do
   defp apply_where(data, :nil) do
     data
   end
-  defp apply_where(data, where_expr) do
-    Enum.filter(data, fn(row) ->
-      SqlValue.is_truthy?(SqlExpr.eval(row, where_expr))
+  defp apply_where({columns, rows}, where_expr) do
+    filtered_rows = Enum.filter(rows, fn(row) ->
+      SqlValue.is_truthy?(SqlExpr.eval(columns, row, where_expr))
     end)
+    {columns, filtered_rows}
   end
 
   # Evaluate SELECT clause (projection).
-  defp apply_select(data, select_exprs) do
-    if Enum.any?(select_exprs, &SqlExpr.is_aggregate?/1) do
-      # Implicitly group all rows into one big group, if selecting an aggregate.
-      [Enum.map(select_exprs, fn(expr) -> SqlExpr.eval_aggregate(data, expr) end)]
-    else
-      Enum.map(data, fn(row) ->
-        # For each row, evaluate each selected expression.
-        Enum.map(select_exprs, fn(expr) -> SqlExpr.eval(row, expr) end)
-      end)
-    end
+  defp apply_select({columns, rows}, exprs) do
+    selected_columns =
+      Enum.map(exprs, fn expr -> SqlExpr.expr_type(columns, expr) end)
+    projected_rows =
+      if Enum.any?(exprs, &SqlExpr.is_aggregate?/1) do
+        # Implicitly group all rows into one big group, if selecting an aggregate.
+        [Enum.map(exprs, fn(expr) -> SqlExpr.eval_aggregate(columns, rows, expr) end)]
+      else
+        Enum.map(rows, fn(row) ->
+          # For each row, evaluate each selected expression.
+          Enum.map(exprs, fn(expr) -> SqlExpr.eval(columns, row, expr) end)
+        end)
+      end
+    {selected_columns, projected_rows}
   end
 
   # Apply ORDER BY clause to the result set.
   defp apply_order(data, :nil) do
     data
   end
-  defp apply_order(data, order) do
-    Enum.sort_by(data, fn row ->
+  defp apply_order({columns, rows}, order) do
+    sorted_rows = Enum.sort_by(rows, fn row ->
       Enum.map(order, fn expr ->
-        SqlExpr.eval(row, expr)
+        SqlExpr.eval(columns, row, expr)
       end)
     end)
+    {columns, sorted_rows}
+  end
+end
+
+defmodule Columns do
+  def new(columns) do
+    name_to_index = columns
+      |> Enum.map(fn {name, _} -> name end)
+      |> Enum.with_index()
+      |> Enum.into(%{})
+    {List.to_tuple(columns), name_to_index}
+  end
+
+  def get_index({_, name_to_index}, name) do
+    name_to_index[name]
+  end
+
+  def get_type(columns, name) do
+    {column_tuple, _} = columns
+    {_, type} = elem(column_tuple, get_index(columns, name))
+    type
+  end
+end
+
+defmodule RowSet do
+  def new(columns, rows) do
+    {columns, rows}
+  end
+
+  def rows({_, rows}), do: rows
+
+  def load!(filename) do
+    raw_rows = File.stream!(filename) |> CSV.decode() |> Enum.to_list
+    columns = hd(raw_rows)
+      |> Enum.map(fn name ->
+           # hack: guess type from column name
+           type = cond do
+             String.ends_with?(name, "Id") -> :int
+             true -> :str
+           end
+           {name, type}
+         end)
+
+    rows = tl(raw_rows)
+      |> Enum.map(fn row ->
+           Enum.zip(row, columns)
+             |> Enum.map(fn {value, {_, type}} ->
+                  case type do
+                    :int ->
+                      {n, ""} = Integer.parse(value)
+                      n
+                    :str -> value
+                  end
+                end)
+             |> List.to_tuple()
+         end)
+
+    new(Columns.new(columns), rows)
   end
 end
 
@@ -187,32 +244,48 @@ defmodule SqlExpr do
     end
   end
 
-  def eval_aggregate(group, expr) do
+  def expr_type(columns, expr) do
+    case expr do
+      {:identifier, name} -> Columns.get_type(columns, name)
+      {:number, _} -> :int
+      {:apply, "COUNT", _} -> :int  # for now, the only function is COUNT()
+      {:string, _} -> :str
+      {:is_null, _} -> :bool
+      {:=, _, _} -> :bool
+      {:<>, _, _} -> :bool
+      {:and, _, _} -> :bool
+      {:or, _, _} -> :bool
+      :* -> :row
+      _ -> raise ArgumentError, message: "internal error: unrecognized expr #{inspect(expr)}"
+    end
+  end
+
+  def eval_aggregate(columns, group, expr) do
     case expr do
       {:apply, fnname, arg_exprs} ->
         _ = Enum.map(group, fn(row) ->
-          Enum.map(arg_exprs, fn(expr) -> eval(row, expr) end)
+          Enum.map(arg_exprs, fn(expr) -> eval(columns, row, expr) end)
         end)
         case String.upcase(fnname) do
           "COUNT" -> length(group)
           _ -> raise ArgumentError, message: "internal error: unknown function #{inspect(fnname)}"
         end
       _ ->
-        eval(hd(group), expr)
+        eval(columns, hd(group), expr)
     end
   end
 
-  def eval(row, expr) do
+  def eval(columns, row, expr) do
     case expr do
-      {:identifier, x} -> row[x]
+      {:identifier, x} -> elem(row, Columns.get_index(columns, x))
       {:number, n} -> n
       {:string, s} -> s
       {:is_null, subexpr} ->
-        val = eval(row, subexpr)
+        val = eval(columns, row, subexpr)
         SqlValue.is_null?(val)
       {binary_op, left_expr, right_expr} ->
-        left_val = eval(row, left_expr)
-        right_val = eval(row, right_expr)
+        left_val = eval(columns, row, left_expr)
+        right_val = eval(columns, row, right_expr)
         case binary_op do
           := -> SqlValue.equals?(left_val, right_val)
           :'<>' -> SqlValue.logical_not(SqlValue.equals?(left_val, right_val))
