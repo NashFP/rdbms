@@ -2,8 +2,10 @@
 (require-extension srfi-13)
 (require-extension data-structures)
 (require-extension extras)
+(require-extension csv)
 
-;; This is the basic databas engine
+(use csv-string)
+;; This is the basic database engine
 ;;
 ;; Define a tag used to "poison" part of a where clause to
 ;; consider that part as being true
@@ -14,7 +16,8 @@
 (define (load-table table-name)
   (with-input-from-file (string-concatenate (list "../tests/tables/" table-name ".csv"))
     (lambda()
-      (let* ((lines (map (lambda (s) (string-split s ",")) (read-lines)))
+      (let* ((parser (csv-parser))
+             (lines (map (lambda (l) (csv-record->list (car (parser l)))) (read-lines)))
              (columns (car lines))
              (data (cdr lines)))
         (map (lambda (d) (alist->dict (map cons columns d) equal?)) data)))))
