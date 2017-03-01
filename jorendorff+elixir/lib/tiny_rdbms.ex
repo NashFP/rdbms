@@ -23,7 +23,7 @@ defmodule TinyRdbms do
       {:error, reason} -> {:error, reason}
       :eof -> :eof
       query ->
-        IO.inspect(run_query(db, query))
+        RowSet.inspect(run_query(db, query))
         run_repl(db)
     end
   end
@@ -107,6 +107,12 @@ defmodule Columns do
     type
   end
 
+  def names({columns, _}) do
+    Tuple.to_list(columns)
+      |> Enum.map(fn {name, _} -> name end)
+      |> List.to_tuple()
+  end
+
   def row_from_strings(columns, strings) do
     {column_tuple, _} = columns
 
@@ -142,6 +148,17 @@ defmodule RowSet do
       |> Enum.map(fn row -> Columns.row_from_strings(columns, row) end)
 
     new(columns, rows)
+  end
+
+  @doc """
+  Dump a RowSet to stdout.
+  """
+  def inspect(row_set) do
+    headings = Columns.names(RowSet.columns(row_set))
+    IO.inspect(headings)
+    IO.puts("----")
+    RowSet.rows(row_set)
+      |> Enum.map(&IO.inspect/1)
   end
 end
 
