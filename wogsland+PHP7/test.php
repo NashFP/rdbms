@@ -3,7 +3,7 @@
 // setup usage text
 $usage = "Usage:\n";
 $usage .= "  -h/--help Print this man page\n";
-$usage .= "  [dir] [\"SQL\"] Where dir is the location of the CSV tables. And SQL\n";
+$usage .= "  [dir] \"[SQL]\" Where dir is the location of the CSV tables. And SQL\n";
 $usage .= "  is the query to execute on them.\n";
 
 // print man page
@@ -63,7 +63,8 @@ while ('from' != strtolower($pieces[$i])) {
 }
 //print_r($columns);
 
-$table = $pieces[$i+1];
+$i++;
+$table = $pieces[$i];
 
 // see if table exists
 if (!file_exists($tablePath.'/'.$table.'.csv')) {
@@ -101,6 +102,74 @@ while ($row = fgetcsv($tableFile)) {
     $j++;
 }
 //print_r($tableArray);
+
+// parse & apply WHERE clause
+$i++;
+if (isset($pieces[$i])) {
+    // WHERE clause exists?
+    if ('where' != strtolower($pieces[$i])) {
+        echo "\nYour query: $query\n";
+        echo "However, currently only simple SELECT queries with WHERE clauses\n";
+        echo "are supported.\n";
+        echo "\n$usage\n";
+        die;
+    }
+
+    $i++;
+    $operand1 = $pieces[$i];
+
+    $i++;
+    $comparison = $pieces[$i];
+
+    // is comparison valid?
+    //$comparisons = ['=', '!=', '>', '<', '>=', '<=', '<>'];
+    $comparisons = ['='];
+    if (!in_array($comparison, $comparisons)) {
+        echo "\nYour query: $query\n";
+        echo "However, you used the unsupported comparison '$comparison'. Valid\n";
+        echo "supported comparisons include ".implode($comparisons, ', ').".\n";
+        echo "\n$usage\n";
+        die;
+    }
+
+    $i++;
+    $operand2 = $pieces[$i];
+
+    // no more clauses yet
+    $i++;
+    if (isset($pieces[$i])) {
+        echo "\nYour query: $query\n";
+        echo "However, currently only simple SELECT queries with WHERE clauses\n";
+        echo "are supported (no AND, OR, etc).\n";
+        echo "\n$usage\n";
+        die;
+    }
+
+    // apply WHERE clause
+    if (in_array($operand1, $tableColumns) && in_array($operand2, $tableColumns)) {
+        foreach ($tableArray as $index =>$row) {
+            if ($row[$operand1] != $row[$operand2]) {
+                unset($tableArray[$index]);
+            }
+        }
+    } else if (in_array($operand1, $tableColumns) && !in_array($operand2, $tableColumns)) {
+        foreach ($tableArray as $index =>$row) {
+            if ($row[$operand1] != $operand2) {
+                unset($tableArray[$index]);
+            }
+        }
+    } else if (!in_array($operand1, $tableColumns) && in_array($operand2, $tableColumns)) {
+        foreach ($tableArray as $index =>$row) {
+            if ($operand1 != $row[$operand2]) {
+                unset($tableArray[$index]);
+            }
+        }
+    } else { // neither operand is a table column
+        if ($operand1 != $operand2) {
+            $tableArray = [];
+        }
+    }
+}
 
 // SELECT only the column(s) of interest
 foreach ($tableArray as &$row) {
