@@ -19,9 +19,24 @@ defmodule TinyRdbms do
       Enum.reduce(%{}, fn({k, v}, db) -> Map.put(db, k, v) end)
   end
 
+  def repl(dir) do
+    db = load(dir)
+    run_repl(db)
+  end
+
+  def run_repl(db) do
+    case IO.gets("sql> ") do
+      {:error, reason} -> {:error, reason}
+      :eof -> :eof
+      query ->
+        IO.inspect(run_query(db, query))
+        run_repl(db)
+    end
+  end
+
   def run_query(database, query) do
     ast = Sql.parse_select_stmt!(query)
-    ast |> inspect() |> IO.puts()
+    #IO.inspect(ast)
     [table_name] = ast.from
 
     results = Map.get(database, String.downcase(table_name))
