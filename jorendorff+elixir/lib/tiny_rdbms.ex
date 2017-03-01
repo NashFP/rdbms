@@ -3,20 +3,14 @@ defmodule TinyRdbms do
   Documentation for TinyRdbms.
   """
 
-  def load_table(filename) do
-    File.stream!(filename) |>
-      CSV.decode(headers: true) |>
-      Enum.to_list()
-  end
-
   def load(dir) do
-    File.ls!(dir) |>
-      Enum.filter(fn(f) -> String.ends_with?(f, ".csv") end) |>
-      Enum.map(fn(f) ->
+    File.ls!(dir)
+      |> Enum.filter(fn(f) -> String.ends_with?(f, ".csv") end)
+      |> Enum.map(fn(f) ->
         {String.downcase(String.slice(f, 0..-5)),
-         TinyRdbms.load_table(Path.join(dir, f))}
-      end) |>
-      Enum.reduce(%{}, fn({k, v}, db) -> Map.put(db, k, v) end)
+         RowSet.load!(Path.join(dir, f))}
+      end)
+      |> Enum.into(%{})
   end
 
   def repl(dir) do
@@ -29,7 +23,7 @@ defmodule TinyRdbms do
       {:error, reason} -> {:error, reason}
       :eof -> :eof
       query ->
-        IO.inspect(run_query(db, query))
+        RowSet.inspect(run_query(db, query))
         run_repl(db)
     end
   end
@@ -49,35 +43,122 @@ defmodule TinyRdbms do
   defp apply_where(data, :nil) do
     data
   end
-  defp apply_where(data, where_expr) do
-    Enum.filter(data, fn(row) ->
-      SqlValue.is_truthy?(SqlExpr.eval(row, where_expr))
+  defp apply_where({columns, rows}, where_expr) do
+    filtered_rows = Enum.filter(rows, fn(row) ->
+      SqlValue.is_truthy?(SqlExpr.eval(columns, row, where_expr))
     end)
+    {columns, filtered_rows}
   end
 
   # Evaluate SELECT clause (projection).
-  defp apply_select(data, select_exprs) do
-    if Enum.any?(select_exprs, &SqlExpr.is_aggregate?/1) do
-      # Implicitly group all rows into one big group, if selecting an aggregate.
-      [Enum.map(select_exprs, fn(expr) -> SqlExpr.eval_aggregate(data, expr) end)]
-    else
-      Enum.map(data, fn(row) ->
-        # For each row, evaluate each selected expression.
-        Enum.map(select_exprs, fn(expr) -> SqlExpr.eval(row, expr) end)
-      end)
-    end
+  defp apply_select({columns, rows}, exprs) do
+    selected_columns =
+      exprs
+      |> Enum.map(fn expr -> SqlExpr.column_info(expr, columns) end)
+      |> Columns.new()
+
+    projected_rows =
+      if Enum.any?(exprs, &SqlExpr.is_aggregate?/1) do
+        # Implicitly group all rows into one big group, if selecting an aggregate.
+        [
+          Enum.map(exprs, fn(expr) -> SqlExpr.eval_aggregate(columns, rows, expr) end)
+          |> List.to_tuple()
+        ]
+      else
+        Enum.map(rows, fn(row) ->
+          # For each row, evaluate each selected expression.
+          Enum.map(exprs, fn(expr) -> SqlExpr.eval(columns, row, expr) end)
+          |> List.to_tuple()
+        end)
+      end
+    {selected_columns, projected_rows}
   end
 
   # Apply ORDER BY clause to the result set.
   defp apply_order(data, :nil) do
     data
   end
-  defp apply_order(data, order) do
-    Enum.sort_by(data, fn row ->
+  defp apply_order({columns, rows}, order) do
+    sorted_rows = Enum.sort_by(rows, fn row ->
       Enum.map(order, fn expr ->
-        SqlExpr.eval(row, expr)
+        SqlExpr.eval(columns, row, expr)
       end)
     end)
+    {columns, sorted_rows}
+  end
+end
+
+defmodule Columns do
+  def new(columns) do
+    name_to_index = columns
+      |> Enum.map(fn {name, _} -> name end)
+      |> Enum.with_index()
+      |> Enum.into(%{})
+    {List.to_tuple(columns), name_to_index}
+  end
+
+  def get_index({_, name_to_index}, name) do
+    name_to_index[name]
+  end
+
+  def get_type(columns, name) do
+    {column_tuple, _} = columns
+    {_, type} = elem(column_tuple, get_index(columns, name))
+    type
+  end
+
+  def names({columns, _}) do
+    Tuple.to_list(columns)
+      |> Enum.map(fn {name, _} -> name end)
+      |> List.to_tuple()
+  end
+
+  def row_from_strings(columns, strings) do
+    {column_tuple, _} = columns
+
+    Enum.zip(Tuple.to_list(column_tuple), strings)
+      |> Enum.map(fn {{_, type}, s} -> SqlValue.from_string(type, s) end)
+      |> List.to_tuple()
+  end
+end
+
+defmodule RowSet do
+  def new(columns, rows) do
+    {columns, rows}
+  end
+
+  def rows({_, rows}), do: rows
+  def columns({columns, _}), do: columns
+
+  def load!(filename) do
+    raw_rows = File.stream!(filename) |> CSV.decode() |> Enum.to_list
+    columns = hd(raw_rows)
+      |> Enum.map(fn name ->
+           # hack: guess type from column name
+           type = cond do
+             String.ends_with?(name, "Id") -> :int
+             String.ends_with?(name, "Price") -> :num
+             true -> :str
+           end
+           {name, type}
+         end)
+      |> Columns.new()
+
+    rows = tl(raw_rows)
+      |> Enum.map(fn row -> Columns.row_from_strings(columns, row) end)
+
+    new(columns, rows)
+  end
+
+  @doc """
+  Dump a RowSet to stdout.
+  """
+  def inspect(row_set) do
+    headings = Columns.names(RowSet.columns(row_set))
+    IO.inspect(headings)
+    IO.puts("----")
+    RowSet.rows(row_set)
+      |> Enum.map(&IO.inspect/1)
   end
 end
 
@@ -121,10 +202,6 @@ defmodule SqlValue do
   As the SQL standard requires, if either `left` or `right` is null, the answer
   is `nil` rather than `false` or `true`.
 
-  Because the CSV files don't include any information about the column types,
-  we lamely treat everything as a string, and this means we have to lamely
-  consider the number `3` equal to the string `"3"`.
-
   ## Examples
 
       iex> SqlValue.equals?(3, 3)
@@ -132,9 +209,7 @@ defmodule SqlValue do
       iex> SqlValue.equals?(3, 5)
       false
       iex> SqlValue.equals?(3, "3")
-      true
-      iex> SqlValue.equals?(10, "10")
-      true
+      false
       iex> SqlValue.equals?(nil, "hello")
       nil
       iex> SqlValue.equals?(nil, nil)
@@ -145,10 +220,7 @@ defmodule SqlValue do
      if is_null?(left) || is_null?(right) do
        nil
      else
-      left == right ||
-        ((is_binary(left) || is_integer(left)) &&
-         (is_binary(right) || is_integer(right)) &&
-         to_string(left) == to_string(right))
+       left == right
      end
   end
 
@@ -177,6 +249,18 @@ defmodule SqlValue do
       _ -> true
     end
   end
+
+  def from_string(_, ""), do: :nil
+  def from_string(:int, string) do
+    {n, ""} = Integer.parse(string)
+    n
+  end
+  def from_string(:num, string), do: Decimal.new(string)
+  def from_string(:str, string), do: string
+  def from_string(:bool, "true"), do: true
+  def from_string(:bool, "false"), do: false
+  def from_string(:bool, "1"), do: true
+  def from_string(:bool, "0"), do: false
 end
 
 defmodule SqlExpr do
@@ -187,32 +271,59 @@ defmodule SqlExpr do
     end
   end
 
-  def eval_aggregate(group, expr) do
+  def column_info(expr, columns) do
+    case expr do
+      {:identifier, name} ->
+        {name, Columns.get_type(columns, name)}
+      _ ->
+        type =
+          case expr do
+            {:number, x} ->
+              if Decimal.decimal? x do
+                :num
+              else
+                :int
+              end
+            {:apply, "COUNT", _} -> :int  # for now, the only function is COUNT()
+            {:string, _} -> :str
+            {:is_null, _} -> :bool
+            {:=, _, _} -> :bool
+            {:<>, _, _} -> :bool
+            {:and, _, _} -> :bool
+            {:or, _, _} -> :bool
+            :* -> :row
+            _ -> raise ArgumentError, message: "internal error: unrecognized expr #{inspect(expr)}"
+          end
+        {:nil, type}  # column has no name
+    end
+  end
+
+  def eval_aggregate(columns, group, expr) do
     case expr do
       {:apply, fnname, arg_exprs} ->
         _ = Enum.map(group, fn(row) ->
-          Enum.map(arg_exprs, fn(expr) -> eval(row, expr) end)
+          Enum.map(arg_exprs, fn(expr) -> eval(columns, row, expr) end)
         end)
         case String.upcase(fnname) do
           "COUNT" -> length(group)
           _ -> raise ArgumentError, message: "internal error: unknown function #{inspect(fnname)}"
         end
       _ ->
-        eval(hd(group), expr)
+        eval(columns, hd(group), expr)
     end
   end
 
-  def eval(row, expr) do
+  def eval(columns, row, expr) do
     case expr do
-      {:identifier, x} -> row[x]
+      {:identifier, x} -> elem(row, Columns.get_index(columns, x))
       {:number, n} -> n
       {:string, s} -> s
       {:is_null, subexpr} ->
-        val = eval(row, subexpr)
+        val = eval(columns, row, subexpr)
         SqlValue.is_null?(val)
       {binary_op, left_expr, right_expr} ->
-        left_val = eval(row, left_expr)
-        right_val = eval(row, right_expr)
+        left_val = eval(columns, row, left_expr)
+        right_val = eval(columns, row, right_expr)
         case binary_op do
           := -> SqlValue.equals?(left_val, right_val)
           :'<>' -> SqlValue.logical_not(SqlValue.equals?(left_val, right_val))
@@ -244,10 +355,11 @@ defmodule Sql do
       [:select, :*, :from, {:identifier, "Student"}]
       iex> Sql.tokenize("WHERE name = '")
       [:where, {:identifier, "name"}, :=, {:error, "unrecognized character: '"}]
-
+      iex> Sql.tokenize("1 <> 0.99")
+      [{:number, 1}, :<>, {:number, Decimal.new("0.99")}]
   """
   def tokenize(s) do
-    token_re = ~r/(?:\s*)(\w+|[0-9]\w+|'(?:[^']|'')*'|>=|<=|<>|.)(?:\s*)/
+    token_re = ~r/(?:\s*)([0-9](?:\w|\.)*|\w+|'(?:[^']|'')*'|>=|<=|<>|.)(?:\s*)/
     Regex.scan(token_re, s, capture: :all_but_first) |>
       Enum.map(&match_to_token/1)
   end
@@ -293,8 +405,12 @@ defmodule Sql do
       _ ->
         cond do
           String.match?(token_str, ~r/^[0-9]/) ->
-            {n, ""} = Integer.parse(token_str)
-            {:number, n}
+            if String.contains?(token_str, ".") do
+              {:number, Decimal.new(token_str)}
+            else
+              {n, ""} = Integer.parse(token_str)
+              {:number, n}
+            end
           String.match?(token_str, ~r/^[a-z]/i) ->
             {:identifier, token_str}
           String.match?(token_str, ~r/^'.*'$/) ->
