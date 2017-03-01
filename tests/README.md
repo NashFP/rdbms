@@ -16,9 +16,9 @@ The database is [the Chinook database](https://chinookdatabase.codeplex.com/).
 
 *   **db/ChinookData.xml** is the same data, all in one XML file.
 
-*   **db/Chinook.sqlite** is the same data in a SQLite database.
+*   **db/chinook.sqlite** is the same data in a SQLite database.
     This is pretty awesome: if you have SQLite installed, you can just
-    do `sqlite3 db/Chinook.sqlite` and it lets you issue SQL queries and commands
+    do `sqlite3 db/chinook.sqlite` and it lets you issue SQL queries and commands
     from your Terminal—a great way to test that your SQL syntax is right.
 
 
