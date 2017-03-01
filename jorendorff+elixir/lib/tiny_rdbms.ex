@@ -53,15 +53,22 @@ defmodule TinyRdbms do
   # Evaluate SELECT clause (projection).
   defp apply_select({columns, rows}, exprs) do
     selected_columns =
-      Enum.map(exprs, fn expr -> SqlExpr.expr_type(columns, expr) end)
+      exprs
+      |> Enum.map(fn expr -> SqlExpr.column_info(expr, columns) end)
+      |> Columns.new()
+
     projected_rows =
       if Enum.any?(exprs, &SqlExpr.is_aggregate?/1) do
         # Implicitly group all rows into one big group, if selecting an aggregate.
-        [Enum.map(exprs, fn(expr) -> SqlExpr.eval_aggregate(columns, rows, expr) end)]
+        [
+          Enum.map(exprs, fn(expr) -> SqlExpr.eval_aggregate(columns, rows, expr) end)
+          |> List.to_tuple()
+        ]
       else
         Enum.map(rows, fn(row) ->
           # For each row, evaluate each selected expression.
           Enum.map(exprs, fn(expr) -> SqlExpr.eval(columns, row, expr) end)
+          |> List.to_tuple()
         end)
       end
     {selected_columns, projected_rows}
@@ -99,6 +106,14 @@ defmodule Columns do
     {_, type} = elem(column_tuple, get_index(columns, name))
     type
   end
+
+  def row_from_strings(columns, strings) do
+    {column_tuple, _} = columns
+
+    Enum.zip(Tuple.to_list(column_tuple), strings)
+      |> Enum.map(fn {{_, type}, s} -> SqlValue.from_string(type, s) end)
+      |> List.to_tuple()
+  end
 end
 
 defmodule RowSet do
@@ -107,6 +122,7 @@ defmodule RowSet do
   end
 
   def rows({_, rows}), do: rows
+  def columns({columns, _}), do: columns
 
   def load!(filename) do
     raw_rows = File.stream!(filename) |> CSV.decode() |> Enum.to_list
@@ -119,22 +135,12 @@ defmodule RowSet do
            end
            {name, type}
          end)
+      |> Columns.new()
 
     rows = tl(raw_rows)
-      |> Enum.map(fn row ->
-           Enum.zip(row, columns)
-             |> Enum.map(fn {value, {_, type}} ->
-                  case type do
-                    :int ->
-                      {n, ""} = Integer.parse(value)
-                      n
-                    :str -> value
-                  end
-                end)
-             |> List.to_tuple()
-         end)
+      |> Enum.map(fn row -> Columns.row_from_strings(columns, row) end)
 
-    new(Columns.new(columns), rows)
+    new(columns, rows)
   end
 end
 
@@ -178,10 +184,6 @@ defmodule SqlValue do
   As the SQL standard requires, if either `left` or `right` is null, the answer
   is `nil` rather than `false` or `true`.
 
-  Because the CSV files don't include any information about the column types,
-  we lamely treat everything as a string, and this means we have to lamely
-  consider the number `3` equal to the string `"3"`.
-
   ## Examples
 
       iex> SqlValue.equals?(3, 3)
@@ -189,9 +191,7 @@ defmodule SqlValue do
       iex> SqlValue.equals?(3, 5)
       false
       iex> SqlValue.equals?(3, "3")
-      true
-      iex> SqlValue.equals?(10, "10")
-      true
+      false
       iex> SqlValue.equals?(nil, "hello")
       nil
       iex> SqlValue.equals?(nil, nil)
@@ -202,10 +202,7 @@ defmodule SqlValue do
      if is_null?(left) || is_null?(right) do
        nil
      else
-      left == right ||
-        ((is_binary(left) || is_integer(left)) &&
-         (is_binary(right) || is_integer(right)) &&
-         to_string(left) == to_string(right))
+       left == right
      end
   end
 
@@ -234,6 +231,17 @@ defmodule SqlValue do
       _ -> true
     end
   end
+
+  def from_string(_, ""), do: :nil
+  def from_string(:int, string) do
+    {n, ""} = Integer.parse(string)
+    n
+  end
+  def from_string(:str, string), do: string
+  def from_string(:bool, "true"), do: true
+  def from_string(:bool, "false"), do: false
+  def from_string(:bool, "1"), do: true
+  def from_string(:bool, "0"), do: false
 end
 
 defmodule SqlExpr do
@@ -244,19 +252,24 @@ defmodule SqlExpr do
     end
   end
 
-  def expr_type(columns, expr) do
+  def column_info(expr, columns) do
     case expr do
-      {:identifier, name} -> Columns.get_type(columns, name)
-      {:number, _} -> :int
-      {:apply, "COUNT", _} -> :int  # for now, the only function is COUNT()
-      {:string, _} -> :str
-      {:is_null, _} -> :bool
-      {:=, _, _} -> :bool
-      {:<>, _, _} -> :bool
-      {:and, _, _} -> :bool
-      {:or, _, _} -> :bool
-      :* -> :row
-      _ -> raise ArgumentError, message: "internal error: unrecognized expr #{inspect(expr)}"
+      {:identifier, name} ->
+        {name, Columns.get_type(columns, name)}
+      _ ->
+        type = case expr do
+          {:number, _} -> :int
+          {:apply, "COUNT", _} -> :int  # for now, the only function is COUNT()
+          {:string, _} -> :str
+          {:is_null, _} -> :bool
+          {:=, _, _} -> :bool
+          {:<>, _, _} -> :bool
+          {:and, _, _} -> :bool
+          {:or, _, _} -> :bool
+          :* -> :row
+          _ -> raise ArgumentError, message: "internal error: unrecognized expr #{inspect(expr)}"
+        end
+        {:nil, type}  # column has no name
     end
   end
 

@@ -16,22 +16,20 @@ defmodule TinyRdbmsTest do
           text,
           capture: :all_but_first)
 
+        row_set = TinyRdbms.run_query(database, query)
+        columns = RowSet.columns(row_set)
+        actual_answer = RowSet.rows(row_set)
+
+        # Parse expected answer. Note that the last step here relies on type
+        # information obtained by actually running the query. Since the CSV
+        # file doesn't say anything about the column types, we can't check them.
         expected_answer =
           Regex.scan(~r/    (.*\n)/, answer_str, capture: :all_but_first) |>
           Enum.map(fn([line]) -> line end) |>
           CSV.decode() |>
-          Enum.to_list()
+          Enum.map(fn row -> Columns.row_from_strings(columns, row) end)
 
-        actual_answer = TinyRdbms.run_query(database, query) |> RowSet.rows()
-
-        for {actual_row, expected_row} <- Enum.zip(actual_answer, expected_answer) do
-          for {actual_val, expected_val} <- Enum.zip(actual_row, expected_row) do
-            if !SqlValue.equals?(actual_val, expected_val) &&
-               !(actual_val == nil && expected_val == nil) do
-              assert actual_answer == expected_answer
-            end
-          end
-        end
+        assert actual_answer == expected_answer
       end
     end
   end
