@@ -19,7 +19,7 @@ defmodule TinyRdbms do
     run_repl(db)
   end
 
-  def run_repl(db) do
+  defp run_repl(db) do
     case IO.gets("sql> ") do
       {:error, reason} -> {:error, reason}
       :eof -> :eof
