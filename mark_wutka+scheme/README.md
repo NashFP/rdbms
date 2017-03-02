@@ -62,6 +62,20 @@ An optimization that could be added would be to look for comparisons
 between a column and constant, and move the tables with those columns
 to the beginning of the list.
 
+## Query Parser
+
+The query parser handles some basic SQL syntax, but is missing some
+important features. Among the things missing that are present in some
+of the test files are:
+* Table aliases  (FROM Album A, Track T)
+* COUNT
+* Numeric values
+
+The parser is implemented using a parser combinator library called
+Prcc. The parser is contained in the select-parser.scm file.
+
+The sql.scm file has several ways to invoke
+
 ## Installation Instructions
 
 This program uses some extension libraries that you may have to install
@@ -71,10 +85,29 @@ in Chicken Scheme. You may have to do:
 sudo chicken-install lookup-table
 sudo chicken-install data-structures
 sudo chicken-install csv
+sudo chicken-install prcc
 ```
+
+To compile the program, run:
+csc -o sql sql.scm
+
+## Running
+
+To get an interactive prompt:
+sql
+
+If you have rlwrap on your system to add readline functionality, then
+rlwrap sql
+
+To execute a .sql file:
+sql somefile.sql
+
+To try one of the .md test files:
+sql ../tests/select/sometestfile.md
 
 ## To Do
 
-It would be nice to create a SQL query parser that translates a SELECT
-statement into the s-expr for the engine. Perhaps the parser could have
-the intelligence to optimize the table order as well.
+* Add table aliasing
+* Add COUNT
+* Add DISTINCT
+* Add a query planner that can optimize the order that tables are joined
