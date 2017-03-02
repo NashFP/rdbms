@@ -32,12 +32,21 @@ defmodule TinyRdbms do
   def run_query(database, query) do
     ast = Sql.parse_select_stmt!(query)
     #IO.inspect(ast)
-    [table_name] = ast.from
 
-    Map.get(database, String.downcase(table_name))
+    combinations_from(database, ast.from)
       |> apply_where(ast.where)
       |> apply_order(ast.order)
       |> apply_select(ast.select)
+  end
+
+  defp combinations_from(_, []), do: RowSet.one()
+  defp combinations_from(database, [table_name | rest]) do
+    t = Map.get(database, String.downcase(table_name))
+    if t == nil do
+      raise ArgumentError, message: "no such table: #{table_name}"
+    end
+    ts = combinations_from(database, rest)
+    RowSet.product(t, ts)
   end
 
   # Evaluate WHERE clause.
@@ -142,11 +151,25 @@ defmodule Columns do
       |> Enum.map(fn {{_, _, _, type}, s} -> SqlValue.from_string(type, s) end)
       |> List.to_tuple()
   end
+
+  def concat({columns1, _}, {columns2, _}) do
+    columns1 = Tuple.to_list(columns1)
+    n = length(columns1)
+    columns2 =
+      for {index, t, c, ty} <- Tuple.to_list(columns2) do
+        {n + index, t, c, ty}
+      end
+    Columns.new(columns1 ++ columns2)
+  end
 end
 
 defmodule RowSet do
   def new(columns, rows) do
     {columns, rows}
+  end
+
+  def one() do
+    RowSet.new(Columns.new([]), [{}])
   end
 
   def rows({_, rows}), do: rows
@@ -182,6 +205,17 @@ defmodule RowSet do
     IO.puts("----")
     RowSet.rows(row_set)
       |> Enum.map(&IO.inspect/1)
+  end
+
+  def product(rs1, rs2) do
+    {cols1, rows1} = rs1
+    {cols2, rows2} = rs2
+    cols = Columns.concat(cols1, cols2)
+    rows =
+      for a <- rows1, b <- rows2 do
+        List.to_tuple(Tuple.to_list(a) ++ Tuple.to_list(b))
+      end
+    {cols, rows}
   end
 end
 
