@@ -7,8 +7,9 @@ defmodule TinyRdbms do
     File.ls!(dir)
       |> Enum.filter(fn(f) -> String.ends_with?(f, ".csv") end)
       |> Enum.map(fn(f) ->
-        {String.downcase(String.slice(f, 0..-5)),
-         RowSet.load!(Path.join(dir, f))}
+        table_name = String.downcase(String.slice(f, 0..-5))
+        {table_name,
+         RowSet.load!(table_name, Path.join(dir, f))}
       end)
       |> Enum.into(%{})
   end
@@ -94,11 +95,23 @@ defmodule Columns do
     by_name =
       columns
       |> Enum.reduce(%{}, fn (col, acc) ->
-        {_, _, name, _} = col
-        if Map.get(acc, name) do
-          Map.put(acc, name, nil)
+        {_, table_name, column_name, _} = col
+        if column_name == nil do
+          acc
         else
-          Map.put(acc, name, col)
+          column_name = String.downcase(column_name)
+          acc =
+            if Map.get(acc, column_name) do
+              Map.put(acc, column_name, nil)
+            else
+              Map.put(acc, column_name, col)
+            end
+          if table_name != nil do
+            table_name = String.downcase(table_name)
+            Map.put(acc, {:., table_name, column_name}, col)
+          else
+            acc
+          end
         end
       end)
     {List.to_tuple(columns), by_name}
@@ -139,7 +152,7 @@ defmodule RowSet do
   def rows({_, rows}), do: rows
   def columns({columns, _}), do: columns
 
-  def load!(filename) do
+  def load!(table_name, filename) do
     raw_rows = File.stream!(filename) |> CSV.decode() |> Enum.to_list
     columns = hd(raw_rows)
       |> Enum.with_index()
@@ -150,7 +163,7 @@ defmodule RowSet do
              String.ends_with?(name, "Price") -> :num
              true -> :str
            end
-           {index, nil, name, type}
+           {index, table_name, name, type}
          end)
       |> Columns.new()
 
@@ -284,7 +297,11 @@ defmodule SqlExpr do
   def column_info(expr, columns, index) do
     case expr do
       {:identifier, name} ->
-        {_, t, c, ty} = Columns.get(columns, name)
+        {_, t, c, ty} = Columns.get(columns, String.downcase(name))
+        {index, t, c, ty}
+      {:., table_name, column_name} ->
+        key = {:., String.downcase(table_name), String.downcase(column_name)}
+        {_, t, c, ty} = Columns.get(columns, key)
         {index, t, c, ty}
       _ ->
         type =
@@ -326,7 +343,11 @@ defmodule SqlExpr do
 
   def eval(columns, row, expr) do
     case expr do
-      {:identifier, x} -> elem(row, Columns.get_index(columns, x))
+      {:identifier, x} ->
+        elem(row, Columns.get_index(columns, String.downcase(x)))
+      {:., t, c} ->
+        key = {:., String.downcase(t), String.downcase(c)}
+        elem(row, Columns.get_index(columns, key))
       {:number, n} -> n
       {:string, s} -> s
       {:is_null, subexpr} ->
@@ -468,6 +489,8 @@ defmodule Sql do
           [:')' | rest] -> {{:apply, fnname_up, args}, rest}
           _ -> raise ArgumentError, message: "')' expected after function arguments"
         end
+      [{:identifier, table_name}, :., {:identifier, column_name} | rest] ->
+        {{:., table_name, column_name}, rest}
       [{:identifier, _} | rest] -> {hd(sql), rest}
       [{:number, _} | rest] -> {hd(sql), rest}
       [{:string, _} | rest] -> {hd(sql), rest}
