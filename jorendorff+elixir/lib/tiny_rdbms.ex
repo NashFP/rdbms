@@ -90,10 +90,16 @@ end
 
 defmodule Columns do
   def new(columns) do
-    name_to_index = columns
-      |> Enum.map(fn {name, _} -> name end)
+    name_to_index =
+      columns
       |> Enum.with_index()
-      |> Enum.into(%{})
+      |> Enum.reduce(%{}, fn ({{name, _}, index}, acc) ->
+        if Map.get(acc, name) do
+          Map.put(acc, name, nil)
+        else
+          Map.put(acc, name, index)
+        end
+      end)
     {List.to_tuple(columns), name_to_index}
   end
 
