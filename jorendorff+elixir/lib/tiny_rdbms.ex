@@ -54,7 +54,8 @@ defmodule TinyRdbms do
   defp apply_select({columns, rows}, exprs) do
     selected_columns =
       exprs
-      |> Enum.map(fn expr -> SqlExpr.column_info(expr, columns) end)
+      |> Enum.with_index()
+      |> Enum.map(fn {expr, index} -> SqlExpr.column_info(expr, columns, index) end)
       |> Columns.new()
 
     projected_rows =
@@ -90,32 +91,34 @@ end
 
 defmodule Columns do
   def new(columns) do
-    name_to_index =
+    by_name =
       columns
-      |> Enum.with_index()
-      |> Enum.reduce(%{}, fn ({{name, _}, index}, acc) ->
+      |> Enum.reduce(%{}, fn (col, acc) ->
+        {_, _, name, _} = col
         if Map.get(acc, name) do
           Map.put(acc, name, nil)
         else
-          Map.put(acc, name, index)
+          Map.put(acc, name, col)
         end
       end)
-    {List.to_tuple(columns), name_to_index}
+    {List.to_tuple(columns), by_name}
   end
 
-  def get_index({_, name_to_index}, name) do
-    name_to_index[name]
+  def get({_, by_name}, name) do
+    by_name[name]
+  end
+
+  def get_index(columns, name) do
+    elem(get(columns, name), 0)
   end
 
   def get_type(columns, name) do
-    {column_tuple, _} = columns
-    {_, type} = elem(column_tuple, get_index(columns, name))
-    type
+    elem(get(columns, name), 3)
   end
 
   def names({columns, _}) do
     Tuple.to_list(columns)
-      |> Enum.map(fn {name, _} -> name end)
+      |> Enum.map(fn {_, _, name, _} -> name end)
       |> List.to_tuple()
   end
 
@@ -123,7 +126,7 @@ defmodule Columns do
     {column_tuple, _} = columns
 
     Enum.zip(Tuple.to_list(column_tuple), strings)
-      |> Enum.map(fn {{_, type}, s} -> SqlValue.from_string(type, s) end)
+      |> Enum.map(fn {{_, _, _, type}, s} -> SqlValue.from_string(type, s) end)
       |> List.to_tuple()
   end
 end
@@ -139,14 +142,15 @@ defmodule RowSet do
   def load!(filename) do
     raw_rows = File.stream!(filename) |> CSV.decode() |> Enum.to_list
     columns = hd(raw_rows)
-      |> Enum.map(fn name ->
+      |> Enum.with_index()
+      |> Enum.map(fn {name, index} ->
            # hack: guess type from column name
            type = cond do
              String.ends_with?(name, "Id") -> :int
              String.ends_with?(name, "Price") -> :num
              true -> :str
            end
-           {name, type}
+           {index, nil, name, type}
          end)
       |> Columns.new()
 
@@ -277,10 +281,11 @@ defmodule SqlExpr do
     end
   end
 
-  def column_info(expr, columns) do
+  def column_info(expr, columns, index) do
     case expr do
       {:identifier, name} ->
-        {name, Columns.get_type(columns, name)}
+        {_, t, c, ty} = Columns.get(columns, name)
+        {index, t, c, ty}
       _ ->
         type =
           case expr do
@@ -300,7 +305,7 @@ defmodule SqlExpr do
             :* -> :row
             _ -> raise ArgumentError, message: "internal error: unrecognized expr #{inspect(expr)}"
           end
-        {:nil, type}  # column has no name
+        {index, nil, nil, type}  # column has no name
     end
   end
 
