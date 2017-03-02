@@ -74,7 +74,11 @@ of the test files are:
 The parser is implemented using a parser combinator library called
 Prcc. The parser is contained in the select-parser.scm file.
 
-The sql.scm file has several ways to invoke
+The sql.scm file takes the output of the parser, checks the table and
+column names to make sure they are value, and then creates a query in
+the format supported by the database engine. Depending on how it is
+invoked it either displays the output or checks to see if it matches
+the expected test output.
 
 ## Installation Instructions
 
