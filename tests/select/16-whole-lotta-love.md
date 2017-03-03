@@ -2,7 +2,7 @@ Perform a simple join to show tracks with a particular name.
 
 ## Query
 
-    SELECT Album.Title
+    SELECT Album.Title, Track.Milliseconds
     FROM Album, Track
     WHERE Track.AlbumId = Album.AlbumId AND Track.Name = 'Whole Lotta Love'
     ORDER BY Album.Title
