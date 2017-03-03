@@ -62,9 +62,22 @@ defmodule TinyRdbms do
     data
   end
   defp apply_where({columns, rows}, where_expr) do
+    t0 = System.monotonic_time(:millisecond)
+
+    # -------------------------------------------------------------------------
+    # Use only one of the next two lines (the other should be commented out)
+    #f = fn (row) -> SqlExpr.eval(columns, row, where_expr) end  # INTERPRETER
+    f = SqlExpr.compile(columns, where_expr)                    # COMPILER
+    # -------------------------------------------------------------------------
+
+    t1 = System.monotonic_time(:millisecond)
     filtered_rows = Enum.filter(rows, fn(row) ->
-      SqlValue.is_truthy?(SqlExpr.eval(columns, row, where_expr))
+      SqlValue.is_truthy?(f.(row))
     end)
+    t2 = System.monotonic_time(:millisecond)
+    IO.puts("compilation time: #{t1 - t0}")
+    IO.puts("run time:         #{t2 - t1}")
+
     {columns, filtered_rows}
   end
 
@@ -381,6 +394,62 @@ defmodule SqlExpr do
       _ ->
         eval(columns, hd(group), expr)
     end
+  end
+
+  defp compile_column_ref(columns, row, key) do
+    i = Columns.get_index(columns, key)
+    quote(do: elem(unquote(row), unquote(i)))
+  end
+
+  def compile_expr(columns, row, expr) do
+    case expr do
+      {:identifier, x} ->
+        compile_column_ref(columns, row, String.downcase(x))
+      {:., t, c} ->
+        key = {:., String.downcase(t), String.downcase(c)}
+        compile_column_ref(columns, row, key)
+      {:number, n} ->
+        if Decimal.decimal?(n) do
+          quote(do: unquote(Decimal).new(unquote(Decimal.to_string(n))))
+        else
+          n
+        end
+      {:string, s} -> s
+      {:is_null, subexpr} ->
+        subexpr_ex = compile_expr(columns, row, subexpr)
+        quote(do: unquote(SqlValue).is_null?(unquote(subexpr_ex)))
+      {binary_op, left_expr, right_expr} ->
+        left_ex = compile_expr(columns, row, left_expr)
+        right_ex = compile_expr(columns, row, right_expr)
+        case binary_op do
+          := -> quote(do: unquote(SqlValue).equals?(unquote(left_ex), unquote(right_ex)))
+          :'<>' -> quote(do: unquote(SqlValue).logical_not(
+                             unquote(SqlValue).equals?(unquote(left_ex), unquote(right_ex))))
+          :and -> quote(do: unquote(SqlValue).logical_and(unquote(left_ex), unquote(right_ex)))
+          :or -> quote(do: unquote(SqlValue).logical_or(unquote(left_ex), unquote(right_ex)))
+          _ -> raise ArgumentError, message: "internal error: bad op #{inspect(binary_op)}"
+        end
+      :* -> row
+      _ -> raise ArgumentError, message: "internal error: unrecognized expr #{inspect(expr)}"
+    end
+  end
+
+  def compile(columns, expr) do
+    row = {:row, [], SqlExpr}
+    body = compile_expr(columns, row, expr)
+
+    # The quoted form of the whole function.
+    code = quote do
+      fn (unquote(row)) -> unquote(body) end
+    end
+    IO.inspect(code)
+
+    # Compile it and return the compiled fn.
+    {result, errs} = Code.eval_quoted(code)
+    for e <- errs do
+      IO.inspect(e)
+    end
+    result
   end
 
   def eval(columns, row, expr) do
