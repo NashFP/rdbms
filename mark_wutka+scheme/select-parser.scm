@@ -61,7 +61,9 @@
     (<s> "<")))
 
 (define comparison
-  (seq_ expr comp expr))
+  (seq_ expr (<or> 
+               (<@> (<r> "[Ii][Ss] *[Nn][Uu][Ll][Ll]") (lambda (x) "isnull"))
+               (seq_ comp expr))))
 
 (define where-expr
   (<or>

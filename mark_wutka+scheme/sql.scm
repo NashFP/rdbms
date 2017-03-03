@@ -130,12 +130,16 @@
 
 ;; Check each side of a where comparison and the operator
 (define (check-where-comp checked-tables where)
-  (let ((first-expr (check-where-expr checked-tables (first where)))
-        (second-expr (check-where-expr checked-tables (third where)))
-        (comp-op (check-comp-op (second where))))
-    (if (and first-expr second-expr comp-op)
-      (make-comparison comp-op (second where) first-expr second-expr)
-      #f)))
+  (let ((first-expr (check-where-expr checked-tables (first where))))
+    (if (equal? (second where) "isnull")
+      (if first-expr
+        (make-comparison (get-string-op "=") "=" first-expr "")
+        #f)
+      (let ((second-expr (check-where-expr checked-tables (cadadr where)))
+            (comp-op (check-comp-op (caadr where))))
+        (if (and first-expr second-expr comp-op)
+          (make-comparison comp-op (caadr where) first-expr second-expr)
+          #f)))))
 
 ;; If the expression is a string, strip the quotes
 (define (check-where-expr checked-tables expr)
