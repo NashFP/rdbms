@@ -119,6 +119,5 @@ sql ../tests/select/sometestfile.md
 
 ## To Do
 
-* Add COUNT
 * Add DISTINCT
 * Add a query planner that can optimize the order that tables are joined

@@ -36,13 +36,15 @@
 (define (check-select-columns columns checked-tables where order-by)
   (if (equal? columns "*")
     (check-columns-star checked-tables where order-by)
-    (let ((checked-columns 
-           (append-map 
-             (lambda (col) (check-select-column col checked-tables))
-             (delete "," columns))))
-      (if (every identity checked-columns)
-        (check-where checked-columns checked-tables where order-by)
-        #f))))
+    (if (equal? columns "count(*)")
+      (check-where '() checked-tables where order-by)
+      (let ((checked-columns 
+            (append-map 
+              (lambda (col) (check-select-column col checked-tables))
+              (delete "," columns))))
+        (if (every identity checked-columns)
+          (check-where checked-columns checked-tables where order-by)
+          #f)))))
 
 ;; If the column list is just * and there is one table, use all
 ;; the columns from that one table
@@ -60,17 +62,31 @@
       (begin
         (format #t "Invalid table name: ~A~%:" table-alias)))))
 
+(define (is-column-in-table column table-spec)
+  (find (lambda (col) (string-ci= column col)) (table-columns (cadr table-spec))))
+
+(define (find-unique-column-table col-spec checked-tables)
+  (let ((matching-tables (filter (lambda (t) (is-column-in-table col-spec t)) checked-tables)))
+    (if matching-tables
+      (if (= (length matching-tables) 1) (car matching-tables)
+        (begin
+          (format #t "Unqualified column ~A is ambiguous~%" col-spec)
+          #f))
+      (begin
+          (format #t "Unqualified column ~A does not appear in any queried table~%" col-spec)
+          #f))))
+
 ;; if there is no table qualifier on the column, make sure there
 ;; is only one table in the select
 (define (check-select-column column checked-tables)
   (let ((table-spec (car column))
         (col-spec (cadr column)))
     (if (equal? table-spec "") 
-      (if (> (length checked-tables) 1)
-        (begin
-          (format #t "Column ~A must have a table specifier (multiple tables)~%" col-spec)
-          #f)
-        (check-select-column-table col-spec (car checked-tables)))
+      (let ((unique-table (find-unique-column-table col-spec checked-tables)))
+        (if unique-table (check-select-column-table col-spec unique-table)
+          (begin
+            (format #t "Column ~A must have a table specifier (multiple tables)~%" col-spec)
+            #f)))
       (let ((checked-table-spec (check-table-alias (car table-spec) checked-tables)))
         (if checked-table-spec (check-select-column-table col-spec checked-table-spec)
           #f)))))
@@ -100,7 +116,7 @@
 
 (define (check-where-or checked-tables where)
   (let ((checked-where-and (map (lambda (w) (check-where-and checked-tables w)) (delete "or " where))))
-    (if checked-where-and
+    (if (every identity checked-where-and)
       (cons db-or checked-where-and)
       #f)))
 
@@ -108,7 +124,7 @@
 ;; expressions, because that's how the parser returns them
 (define (check-where-and checked-tables where)
   (let ((checked-where-comps (map (lambda (w) (check-where-comp checked-tables w)) (delete "and " where))))
-    (if checked-where-comps 
+    (if (every identity checked-where-comps)
       (cons db-and checked-where-comps)
       #f)))
 
@@ -162,11 +178,11 @@
   (let ((table-spec (car column))
         (col-spec (cadr column)))
     (if (equal? table-spec "") 
-      (if (> (length checked-tables) 1)
-        (begin
-          (format #t "Column ~A must have a table specifier (multiple tables)~%" col-spec)
-          #f)
-        (check-column-table col-spec (car checked-tables)))
+      (let ((unique-table (find-unique-column-table col-spec checked-tables)))
+        (if unique-table (check-column-table col-spec unique-table)
+          (begin
+            (format #t "Column ~A must have a table specifier (multiple tables)~%" col-spec)
+            #f)))
       (let ((checked-table-spec (check-table-alias (car table-spec) checked-tables)))
         (if checked-table-spec (check-column-table col-spec checked-table-spec)
           #f)))))
@@ -228,11 +244,12 @@
 
 ;; Displays the results of a query
 (define (display-results columns query-result)
-  (let* ((formatted-columns (map format-column columns))
-         (col-widths (max-column-widths query-result (get-column-widths formatted-columns))))
-    (display-row formatted-columns col-widths)
-    (display-row (make-dashes col-widths) col-widths)
-    (map (lambda (r) (display-row r col-widths)) query-result)))
+  (if (= (length columns) 0) (begin (display (length query-result))(newline))
+    (let* ((formatted-columns (map format-column columns))
+          (col-widths (max-column-widths query-result (get-column-widths formatted-columns))))
+      (display-row formatted-columns col-widths)
+      (display-row (make-dashes col-widths) col-widths)
+      (map (lambda (r) (display-row r col-widths)) query-result))))
 
 ;; Displays a row, separating each column by a |
 (define (display-row row widths)
@@ -295,16 +312,20 @@
 (define (add-quotes-if-needed s)
   (if (or (string-index s #\,) (string-contains s "\"\"")) (string-concatenate (list "\"" s "\"")) s))
 
-(define (format-results-for-md results)
-  (map (lambda (r) (string-join (map add-quotes-if-needed r) ",")) results))
+(define (format-results-for-md is-count results)
+  (if is-count (list (number->string (length results)))
+    (map (lambda (r) (string-join (map add-quotes-if-needed r) ",")) results)))
 
-(define (check-md-results results expected)
-  (if (equal? (format-results-for-md results) expected)
-    (format #t "Passed.~%")
-    (begin (format #t "Failed.~%~%Expected:~%")
-           (map (lambda (l) (display l)(newline)) expected)
-           (format #t "~%Got:~%")
-           (map (lambda (l) (display l)(newline)) (format-results-for-md results)))))
+(define (check-md-results is-count has-order-by results expected)
+  (let ((comparison (if has-order-by
+                      (equal? (format-results-for-md is-count results) expected)
+                      (equal? (sort (format-results-for-md is-count results) string<) (sort expected string<)))))
+    (if comparison
+      (format #t "Passed.~%")
+      (begin (format #t "Failed.~%~%Expected:~%")
+            (map (lambda (l) (display l)(newline)) expected)
+            (format #t "~%Got:~%")
+            (map (lambda (l) (display l)(newline)) (format-results-for-md is-count results))))))
     
 ;; Reads a .md file, runs the query and checks the answer
 (define (read-md-file filename)
@@ -316,7 +337,9 @@
       (let ((prepared (prepare-query parsed)))
         (if prepared
           (let ((results (apply do-query prepared)))
-            (check-md-results results md-answer)))))))
+            (check-md-results (= (length (car prepared)) 0) 
+                              (> (length (fourth prepared)) 0)
+                              results md-answer)))))))
 
 
 (if (> (length (argv)) 1)

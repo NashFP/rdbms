@@ -25,6 +25,7 @@
 (define select-columns 
   (<or>
     (<c> #\*)
+    (<@> (<r> "[Cc][Oo][Uu][Nn][Tt] *[(] *[*] *[)]") (lambda (x) "count(*)"))
     (join+_ select-column (<c> #\,))))
 
 (define table
@@ -53,6 +54,7 @@
   (<or>
     (<s> "=")
     (<s> "!=")
+    (<@> (<s> "<>") (lambda (x) "!="))
     (<s> ">=")
     (<s> "<=")
     (<s> ">")
