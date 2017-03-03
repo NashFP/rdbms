@@ -25,9 +25,11 @@ Join four tables to produce a playlist.
     3416,A Soprano Inspired,Ave Maria,338243
     3417,Great Opera Choruses,"Nabucco: Chorus, ""Va, Pensiero, Sull'ali Dorate""",274504
     3418,Wagner: Favourite Overtures,Die Walküre: The Ride of the Valkyries,189008
+    3419,"Fauré: Requiem, Ravel: Pavane & Others","Requiem, Op.48: 4. Pie Jesu",258924
     3420,Tchaikovsky: The Nutcracker,"The Nutcracker, Op. 71a, Act II: Scene 14: Pas de deux: Dance of the Prince & the Sugar-Plum Fairy",304226
     3421,The Last Night of the Proms,"Nimrod (Adagio) from Variations On an Original Theme, Op. 36 ""Enigma""",250031
     3422,Puccini: Madama Butterfly - Highlights,Madama Butterfly: Un Bel Dì Vedremo,277639
+    3423,"Holst: The Planets, Op. 32 & Vaughan Williams: Fantasies","Jupiter, the Bringer of Jollity",522099
     3424,Pavarotti's Opera Made Easy,"Turandot, Act III, Nessun dorma!",176911
     3425,Great Performances - Barber's Adagio and Other Romantic Favorites for Strings,"Adagio for Strings from the String Quartet, Op. 11",596519
     3426,Carmina Burana,Carmina Burana: O Fortuna,156710

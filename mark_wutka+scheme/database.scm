@@ -1,5 +1,5 @@
 (require-extension lookup-table)
-(require-extension srfi-13)
+(require-extension utf8-srfi-13)
 (require-extension data-structures)
 (require-extension extras)
 (require-extension csv)
@@ -20,7 +20,8 @@
              (lines (map (lambda (l) (csv-record->list (car (parser l)))) (read-lines)))
              (columns (car lines))
              (data (cdr lines)))
-        (map (lambda (d) (alist->dict (map cons columns d) equal?)) data)))))
+        (list columns
+              (map (lambda (d) (alist->dict (map cons columns d) equal?)) data))))))
 
 ;; This is a specialized cartesian product that assumes that the first item can be a
 ;; multi-valued list, but the second only a single-valued list. It is used to progressively
@@ -53,7 +54,7 @@
   (if (or (eq? func db-and) (eq? func db-or))
     (apply func args)
     (if (member unavailable args) unavailable
-      (apply func args))))
+        (apply func args))))
 
 ;; Evaluates a where expression. If it sees a pair with (table-name . column-name) it
 ;; retrieves the value from table-assoc, which is the current row. Otherwise, if it
@@ -65,7 +66,7 @@
     (if (procedure? (car expr))
       (let ((args (map (lambda (v) (eval-expr v table-assoc)) (cdr expr)))
             (func (car expr)))
-        (apply-func func args))
+          (apply-func func args))
       (let* ((t (car expr))
             (col (cdr expr))
             (tab (assoc t table-assoc)))
@@ -75,28 +76,26 @@
     expr))
 
 ;; Load the tables
-(define album (load-table "album"))
-(define artist (load-table "artist"))
-(define customer (load-table "customer"))
-(define employee (load-table "employee"))
-(define genre (load-table "genre"))
-(define invoice (load-table "invoice"))
-(define invoiceline (load-table "invoiceline"))
-(define mediatype (load-table "mediatype"))
-(define playlist (load-table "playlist"))
-(define playlisttrack (load-table "playlisttrack"))
-(define track (load-table "track"))
 
-;; Create a table dictionary
-(define table-list '(("album" album) ("artist" artist) ("customer" customer)
-                     ("employee" employee) ("genre" genre) ("invoice" invoice)
-                     ("invoiceline" invoiceline) ("mediatype" mediatype)
-                     ("playlist" playlist) ("playlisttrack" playlisttrack)
-                     ("track" track)))
+(define table-names '("album" "artist" "customer" "employee" "genre"
+                      "invoice" "invoiceline" "mediatype" "playlist"
+                      "playlisttrack" "track"))
+
+(define loaded-tables
+  (map (lambda (tn) (list tn (load-table tn))) table-names))
+
+(define table-list
+  (map (lambda (tn) (list tn (cadadr (assoc tn loaded-tables)))) table-names))
+
+(define table-column-list
+  (map (lambda (tn) (list tn (caadr (assoc tn loaded-tables)))) table-names))
+
+(define (table-columns table)
+  (cadr (assoc table table-column-list)))
 
 ;; Given a list of table names, return a list of (table-name table) pairs
 (define (from tables)
-  (map (lambda (t) (assoc t table-list)) tables))
+  (map (lambda (t) (list (car t) (cadr (assoc (cadr t) table-list)))) tables))
 
 ;; Given a list of (table-name . column-name) values, retrieve the values from the row
 (define (get-values vs row)
@@ -107,7 +106,7 @@
 ;; For a named table, load the data from the table, making each table row into
 ;; a pair (table-name . row)
 (define (get-table-rows table-pair)
-  (map (lambda (r) (list (cons (car table-pair) r))) (eval (cadr table-pair))))
+  (map (lambda (r) (list (cons (car table-pair) r))) (cadr table-pair)))
 
 ;; Remove any rows that don't match the where clause
 (define (filter-result where tables)
@@ -124,6 +123,10 @@
   (fold (lambda (t2 t1) (join-rows t1 t2 where))
         (filter-result where (get-table-rows (car tables))) (cdr tables)))
 
+(define number-match (regexp "[0-9][0-9]*[.]?[0-9]*"))
+
+(define (is-number s) (string-match number-match s))
+
 ;; Compares two rows for sorting
 (define (row-compare r1 r2 order-list)
   (if (null? order-list) #t
@@ -131,7 +134,9 @@
            (r1-value (value-by-name (cdr curr-col) (table-by-name (car curr-col) r1)))
            (r2-value (value-by-name (cdr curr-col) (table-by-name (car curr-col) r2))))
       (if (string= r1-value r2-value) (row-compare r1 r2 (cdr order-list))
-        (string< r1-value r2-value)))))
+        (if (and (is-number r1-value) (is-number r2-value))
+          (< (string->number r1-value) (string->number r2-value))
+          (string< r1-value r2-value))))))
 
 ;; Performs a query and returns the values
 (define (do-query vals tables where order-by)
