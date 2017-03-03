@@ -39,12 +39,20 @@ defmodule TinyRdbms do
       |> apply_select(ast.select)
   end
 
-  defp combinations_from(_, []), do: RowSet.one()
-  defp combinations_from(database, [table_name | rest]) do
+  defp table!(database, table_name) do
     t = Map.get(database, String.downcase(table_name))
     if t == nil do
       raise ArgumentError, message: "no such table: #{table_name}"
     end
+    t
+  end
+
+  defp combinations_from(_, []), do: RowSet.one()
+  ## defp combinations_from(database, [table_name]) do
+  ##   table!(database, table_name)
+  ## end
+  defp combinations_from(database, [table_name | rest]) do
+    t = table!(database, table_name)
     ts = combinations_from(database, rest)
     RowSet.product(t, ts)
   end
