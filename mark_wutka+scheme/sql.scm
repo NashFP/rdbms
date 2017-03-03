@@ -16,15 +16,17 @@
 
 ;; Check all the table names
 (define (check-tables columns tables where orderby)
-  (let ((checked-tables (map check-table (delete "," tables))))
+  (let ((checked-tables (map check-table-with-alias (delete "," tables))))
     (if (every identity checked-tables)
       (check-select-columns columns checked-tables where orderby))))
 
 ;; Check to see if this table exists, allow case-independent matching,
 ;; then use the name of the table as it in in the database
-(define (check-table table)
-  (let ((checked-table (assoc table table-list string-ci=)))
-    (if checked-table (car checked-table)
+(define (check-table-with-alias table)
+  (let* ((alias (if (equal? "" (second table)) (first table) (second table)))
+        (table-name (first table))
+        (checked-table (assoc table-name table-list string-ci=)))
+    (if checked-table (list alias (car checked-table))
       (begin
         (format #t "Invalid table name: ~A~%" table)
         #f))))
@@ -48,8 +50,14 @@
     (begin
       (format #t "Unable to select * on more than one table~%")
       #f)
-    (check-where (map (lambda (col) (cons (car checked-tables) col))
-           (table-columns (car checked-tables))) checked-tables where order-by)))
+    (check-where (map (lambda (col) (cons (caar checked-tables) col))
+           (table-columns (cadr checked-tables))) checked-tables where order-by)))
+
+(define (check-table-alias table-alias checked-tables)
+  (let ((table-spec (assoc table-alias checked-tables)))
+    (if table-spec table-spec
+      (begin
+        (format #t "Invalid table name: ~A~%:" table-alias)))))
 
 ;; if there is no table qualifier on the column, make sure there
 ;; is only one table in the select
@@ -62,7 +70,7 @@
           (format #t "Column ~A must have a table specifier (multiple tables)~%" col-spec)
           #f)
         (check-select-column-table col-spec (car checked-tables)))
-      (let ((checked-table-spec (check-table (car table-spec))))
+      (let ((checked-table-spec (check-table-alias (car table-spec) checked-tables)))
         (if checked-table-spec (check-select-column-table col-spec checked-table-spec)
           #f)))))
 
@@ -70,10 +78,10 @@
 ;; insert all the columns for that table
 (define (check-select-column-table column checked-table)
   (if (equal? column "*")
-    (map (lambda (col) (cons checked-table col))
-           (table-columns checked-table))
-    (let ((checked-column (find (lambda (col) (string-ci= column col)) (table-columns checked-table))))
-      (if checked-column (list (cons checked-table checked-column))
+    (map (lambda (col) (cons (car checked-table) col))
+           (table-columns (cadr checked-table)))
+    (let ((checked-column (find (lambda (col) (string-ci= column col)) (table-columns (cadr checked-table)))))
+      (if checked-column (list (cons (car checked-table) checked-column))
         (begin
           (format #t "Invalid column ~A for table ~A~%" column checked-table)
           #f)))))
@@ -135,14 +143,14 @@
           (format #t "Column ~A must have a table specifier (multiple tables)~%" col-spec)
           #f)
         (check-column-table col-spec (car checked-tables)))
-      (let ((checked-table-spec (check-table (car table-spec))))
+      (let ((checked-table-spec (check-table-alias (car table-spec) checked-tables)))
         (if checked-table-spec (check-column-table col-spec checked-table-spec)
           #f)))))
 
 ;; Make sure the column is in the table
 (define (check-column-table column checked-table)
-  (let ((checked-column (find (lambda (col) (string-ci= column col)) (table-columns checked-table))))
-    (if checked-column (cons checked-table checked-column)
+  (let ((checked-column (find (lambda (col) (string-ci= column col)) (table-columns (cadr checked-table)))))
+    (if checked-column (cons (car checked-table) checked-column)
       (begin
         (format #t "Invalid column ~A for table ~A~%" column checked-table)
         #f))))
@@ -260,14 +268,20 @@
   (let* ((lines (load-file filename)))
     (look-for-md-query lines "" '())))
 
+(define (add-quotes-if-needed s)
+  (if (or (string-index s #\,) (string-contains s "\"\"")) (string-concatenate (list "\"" s "\"")) s))
+
 (define (format-results-for-md results)
-  (map (lambda (r) (string-join r ",")) results))
+  (map (lambda (r) (string-join (map add-quotes-if-needed r) ",")) results))
 
 (define (check-md-results results expected)
   (if (equal? (format-results-for-md results) expected)
     (format #t "Passed.~%")
-    (format #t "Failed.~%")))
-
+    (begin (format #t "Failed.~%~%Expected:~%")
+           (map (lambda (l) (display l)(newline)) expected)
+           (format #t "~%Got:~%")
+           (map (lambda (l) (display l)(newline)) (format-results-for-md results)))))
+    
 ;; Reads a .md file, runs the query and checks the answer
 (define (read-md-file filename)
   (let* ((md-query-data (load-md-file filename))

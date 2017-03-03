@@ -95,7 +95,7 @@
 
 ;; Given a list of table names, return a list of (table-name table) pairs
 (define (from tables)
-  (map (lambda (t) (assoc t table-list)) tables))
+  (map (lambda (t) (list (car t) (cadr (assoc (cadr t) table-list)))) tables))
 
 ;; Given a list of (table-name . column-name) values, retrieve the values from the row
 (define (get-values vs row)

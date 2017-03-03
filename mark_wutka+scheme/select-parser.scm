@@ -20,8 +20,11 @@
     (<c> #\*)
     (join+_ select-column (<c> #\,))))
 
+(define table
+  (seq_ identifier (<?> identifier)))
+
 (define tables
-  (join+_ identifier (<c> #\,)))
+  (join+_ table (<c> #\,)))
 
 (define column
   (seq_ table-qualifier? identifier))
@@ -31,7 +34,8 @@
 
 (define constant
   (<or>
-    (<r> "'[^']*'")))
+    (<r> "'[^']*'")
+    (<r> "[0-9][0-9]*")))
 
 (define expr
   (<or>
