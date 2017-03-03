@@ -123,6 +123,10 @@
   (fold (lambda (t2 t1) (join-rows t1 t2 where))
         (filter-result where (get-table-rows (car tables))) (cdr tables)))
 
+(define number-match (regexp "[0-9][0-9]*[.]?[0-9]*"))
+
+(define (is-number s) (string-match number-match s))
+
 ;; Compares two rows for sorting
 (define (row-compare r1 r2 order-list)
   (if (null? order-list) #t
@@ -130,7 +134,9 @@
            (r1-value (value-by-name (cdr curr-col) (table-by-name (car curr-col) r1)))
            (r2-value (value-by-name (cdr curr-col) (table-by-name (car curr-col) r2))))
       (if (string= r1-value r2-value) (row-compare r1 r2 (cdr order-list))
-        (string< r1-value r2-value)))))
+        (if (and (is-number r1-value) (is-number r2-value))
+          (< (string->number r1-value) (string->number r2-value))
+          (string< r1-value r2-value))))))
 
 ;; Performs a query and returns the values
 (define (do-query vals tables where order-by)

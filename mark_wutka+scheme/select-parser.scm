@@ -1,8 +1,15 @@
-(require-extension prcc)
+(include "prcc-maw.scm")
 
-;; This is a parser SQl queries using a parser-combinator library
+(use prcc-maw)
 
-(define identifier (<r> "[A-Za-z_][A-Za-z0-9_]*"))
+(define where (<r> "[Ww][Hh][Ee][Rr][Ee] "))
+(define order (<r> "[Oo][Rr][Dd][Ee][Rr] "))
+(define by (<r> "[Bb][Yy] "))
+
+(define (keyword-check k)
+  (or (string-ci= k "where") (string-ci= k "order") (string-ci= k "by")))
+
+(define identifier (regexp-parser-with-check "[A-Za-z_][A-Za-z0-9_]*" keyword-check))
 
 (define table-qualifier
   (seq_ identifier (<c> #\.)))
@@ -35,7 +42,7 @@
 (define constant
   (<or>
     (<r> "'[^']*'")
-    (<r> "[0-9][0-9]*")))
+    (<r> "[0-9][0-9]*[.]?[0-9]*")))
 
 (define expr
   (<or>
@@ -74,12 +81,7 @@
     (<r> "[Ff][Rr][Oo][Mm] ")
     tables
     (<?>
-      (seq_
-        (<r> "[Ww][Hh][Ee][Rr][Ee] ")
-        where-clause))
+      (seq_ where where-clause))
     (<?>
-      (seq_
-        (<r> "[Oo][Rr][Dd][Ee][Rr] ")
-        (<r> "[Bb][Yy] ")
-        columns))
+      (seq_ order by columns))
     skip: (<or> (<s*>) (eof))))

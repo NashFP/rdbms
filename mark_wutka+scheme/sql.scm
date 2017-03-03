@@ -1,5 +1,6 @@
 (require-extension utf8-srfi-13)
 (require-extension extras)
+(require-extension regex)
 
 (include "select-parser.scm")
 (include "database.scm")
@@ -51,7 +52,7 @@
       (format #t "Unable to select * on more than one table~%")
       #f)
     (check-where (map (lambda (col) (cons (caar checked-tables) col))
-           (table-columns (cadr checked-tables))) checked-tables where order-by)))
+           (table-columns (cadar checked-tables))) checked-tables where order-by)))
 
 (define (check-table-alias table-alias checked-tables)
   (let ((table-spec (assoc table-alias checked-tables)))
@@ -117,21 +118,44 @@
         (second-expr (check-where-expr checked-tables (third where)))
         (comp-op (check-comp-op (second where))))
     (if (and first-expr second-expr comp-op)
-      (list comp-op first-expr second-expr)
+      (make-comparison comp-op (second where) first-expr second-expr)
       #f)))
 
 ;; If the expression is a string, strip the quotes
 (define (check-where-expr checked-tables expr)
-  (if (string? expr) (substring/shared expr 1 (- (string-length expr) 1))
+  (if (string? expr) 
+    (if (= (string-prefix-length expr "'") 1)
+      (substring/shared expr 1 (- (string-length expr) 1))
+      expr)
     (check-column expr checked-tables)))
 
 ;; A list of comparison operators and their equivalent functions
-(define op-to-function
+(define string-op-to-function
   (list (cons "=" string=) (cons "!=" string<>) (cons "<" string<) (cons ">" string>)
     (cons ">=" string>=) (cons "<=" string<=)))
 
+(define (ne a b) (not (= a b)))
+
+(define numeric-op-to-function
+  (list (cons "=" =) (cons "!=" ne) (cons "<" <) (cons ">" >)
+    (cons ">=" >=) (cons "<=" <=)))
+
 (define (check-comp-op op)
-  (cdr (assoc op op-to-function)))
+  (cdr (assoc op string-op-to-function)))
+
+(define (get-string-op op)
+  (cdr (assoc op string-op-to-function)))
+
+(define (get-numeric-op op)
+  (cdr (assoc op numeric-op-to-function)))
+
+(define (make-comparison comp-op comp-op-name expr1 expr2)
+  (let ((string-op (get-string-op comp-op-name))
+        (numeric-op (get-numeric-op comp-op-name)))
+    (list (lambda (a b) 
+            (if (and (is-number a) (is-number b))
+              (numeric-op (string->number a) (string->number b))
+              (string-op a b))) expr1 expr2)))
 
 ;; If the column has no table qualifier, there must be only one table
 (define (check-column column checked-tables)
