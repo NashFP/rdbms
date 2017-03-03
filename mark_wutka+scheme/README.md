@@ -72,13 +72,22 @@ of the test files are:
 * Numeric values
 
 The parser is implemented using a parser combinator library called
-Prcc. The parser is contained in the select-parser.scm file.
+Prcc. The parser is contained in the select-parser.scm file. I had to
+modify prcc locally to add the ability to do keyword checking when
+matching identifiers, otherwise it was hard to make it not try
+to take "where" as a table alias in something like:
+select * from genre where genreid=5
 
 The sql.scm file takes the output of the parser, checks the table and
 column names to make sure they are value, and then creates a query in
 the format supported by the database engine. Depending on how it is
 invoked it either displays the output or checks to see if it matches
 the expected test output.
+
+Although all the data values are technically strings, when comparing
+values either in a where clause or in an order-by, if both the values
+are numbers, they are converted from strings to numbers before doing
+the comparison.
 
 ## Installation Instructions
 
@@ -89,7 +98,6 @@ in Chicken Scheme. You may have to do:
 sudo chicken-install lookup-table
 sudo chicken-install data-structures
 sudo chicken-install csv
-sudo chicken-install prcc
 ```
 
 To compile the program, run:
@@ -111,7 +119,6 @@ sql ../tests/select/sometestfile.md
 
 ## To Do
 
-* Add table aliasing
 * Add COUNT
 * Add DISTINCT
 * Add a query planner that can optimize the order that tables are joined
