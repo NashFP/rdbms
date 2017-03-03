@@ -52,7 +52,7 @@
   (if (> (length checked-tables) 1)
     (begin
       (format #t "Unable to select * on more than one table~%")
-      #f)
+      (list #f))
     (check-where (map (lambda (col) (cons (caar checked-tables) col))
            (table-columns (cadar checked-tables))) checked-tables where order-by)))
 
@@ -86,10 +86,10 @@
         (if unique-table (check-select-column-table col-spec unique-table)
           (begin
             (format #t "Column ~A must have a table specifier (multiple tables)~%" col-spec)
-            #f)))
+            (list #f))))
       (let ((checked-table-spec (check-table-alias (car table-spec) checked-tables)))
         (if checked-table-spec (check-select-column-table col-spec checked-table-spec)
-          #f)))))
+          (list #f))))))
 
 ;; Make sure the column is in the table. If the column name is *,
 ;; insert all the columns for that table
@@ -101,7 +101,7 @@
       (if checked-column (list (cons (car checked-table) checked-column))
         (begin
           (format #t "Invalid column ~A for table ~A~%" column checked-table)
-          #f)))))
+          (list #f))))))
 
 ;; If the where clause exists, process it as if it is a list of expressions
 ;; to be or-ed together since that's how the parser returns them
