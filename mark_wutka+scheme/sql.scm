@@ -1,6 +1,7 @@
 (require-extension utf8-srfi-13)
 (require-extension extras)
 (require-extension regex)
+(require-extension csv)
 
 (include "select-parser.scm")
 (include "database.scm")
@@ -303,7 +304,9 @@
       (read-md-query (cdr lines) (string-trim-both (string-join (list curr-query (string-trim-both (car lines))) " ")) curr-answer))))
 
 (define (read-md-answer lines curr-query curr-answer)
-  (if (null? lines) (list curr-query (reverse curr-answer))
+  (if (null? lines) 
+    (let ((parser (csv-parser)))
+      (list curr-query (map (lambda (l) (csv-record->list (car (parser l)))) (reverse curr-answer))))
     (let ((trimmed (string-trim-both (car lines))))
       (if (> (string-length trimmed) 0)
         (read-md-answer (cdr lines) curr-query (cons trimmed curr-answer))
@@ -313,23 +316,24 @@
   (let* ((lines (load-file filename)))
     (look-for-md-query lines "" '())))
 
-(define (add-quotes-if-needed s)
-  (if (or (string-index s #\,) (string-contains s "\"\"")) (string-concatenate (list "\"" s "\"")) s))
+(define (string-list-compare l1 l2)
+  (if (null? l1) #t
+    (let ((l1str (car l1))
+          (l2str (car l2)))
+      (if (equal? l1 l2) (string-list-compare (cdr l1) (cdr l2))
+        (string< l1str l2str)))))
 
-(define (format-results-for-md is-count results)
-  (if is-count (list (number->string (length results)))
-    (map (lambda (r) (string-join (map add-quotes-if-needed r) ",")) results)))
-
-(define (check-md-results is-count has-order-by results expected)
-  (let ((comparison (if has-order-by
-                      (equal? (format-results-for-md is-count results) expected)
-                      (equal? (sort (format-results-for-md is-count results) string<) (sort expected string<)))))
+(define (check-md-results is-count has-order-by results-orig expected)
+  (let* ((results (if is-count (list (list (number->string (length results-orig)))) results-orig))
+         (comparison (if has-order-by
+                       (equal? results expected)
+                       (equal? (sort results string-list-compare) (sort expected string-list-compare)))))
     (if comparison
       (format #t "Passed.~%")
       (begin (format #t "Failed.~%~%Expected:~%")
             (map (lambda (l) (display l)(newline)) expected)
             (format #t "~%Got:~%")
-            (map (lambda (l) (display l)(newline)) (format-results-for-md is-count results))))))
+            (map (lambda (l) (display l)(newline)) results)))))
     
 ;; Reads a .md file, runs the query and checks the answer
 (define (read-md-file filename)
