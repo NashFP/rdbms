@@ -53,14 +53,29 @@ defmodule TinyRdbms do
   defp combine(_, [], _) do
     RowSet.one()
   end
-  defp combine(database, [table_name|more_tables], conds_by_table) do
+  defp combine(database, [table_ast|more_tables], conds_by_table) do
+    {table_name, alias_name} =
+      case table_ast do
+        {:alias, t, a} -> {t, a}
+        t -> {t, t}
+      end
+
     table_cond =
-      Map.get(conds_by_table, String.downcase(table_name), [])
+      Map.get(conds_by_table, String.downcase(alias_name), [])
       |> SqlExpr.join_and()
 
     table!(database, table_name)
+    |> RowSet.apply_alias(alias_name)
     |> RowSet.filter(table_cond)
     |> RowSet.product(combine(database, more_tables, conds_by_table))
+  end
+
+  defp table_column_info(database, {:alias, table_name, alias_name}) do
+    table_column_info(database, table_name)
+    |> Columns.apply_table_alias(alias_name)
+  end
+  defp table_column_info(database, table_name) do
+    RowSet.columns(table!(database, table_name))
   end
 
   defp plan_query(database, ast) do
@@ -72,7 +87,7 @@ defmodule TinyRdbms do
     # tables involved in the query.
     all_column_info =
       ast.from
-      |> Enum.map(fn(name) -> RowSet.columns(table!(database, name)) end)
+      |> Enum.map(&table_column_info(database, &1))
       |> Enum.reduce(&Columns.concat/2)
 
     # Now, for each table, find all "easy" conditions that apply only to that
@@ -84,7 +99,7 @@ defmodule TinyRdbms do
           SqlExpr.split_and(expr)  # break the query down into conditions
           |> Enum.group_by(fn(expr) ->
             case SqlExpr.tables_used(expr, all_column_info) do
-              [table] -> table
+              [table] -> String.downcase(table)
               _ -> 0
             end
           end)
@@ -175,6 +190,13 @@ defmodule Columns do
       end
     Columns.new(columns1 ++ columns2)
   end
+
+  def apply_table_alias({columns, _}, alias_name) do
+    columns
+    |> Tuple.to_list()
+    |> Enum.map(fn {i, _, c, ty} -> {i, alias_name, c, ty} end)
+    |> Columns.new()
+  end
 end
 
 defmodule RowSet do
@@ -208,6 +230,10 @@ defmodule RowSet do
       |> Enum.map(fn row -> Columns.row_from_strings(columns, row) end)
 
     new(columns, rows)
+  end
+
+  def apply_alias({columns, rows}, name) do
+    {Columns.apply_table_alias(columns, name), rows}
   end
 
   @doc """
@@ -736,7 +762,10 @@ defmodule Sql do
 
   defp parse_table!(sql) do
     case sql do
-      [{:identifier, x} | rest] -> {x, rest}
+      [{:identifier, table_name}, {:identifier, alias_name} | rest] ->
+        {{:alias, table_name, alias_name}, rest}
+      [{:identifier, table_name} | rest] ->
+        {table_name, rest}
       _ -> raise ArgumentError, message: "table name expected"
     end
   end
