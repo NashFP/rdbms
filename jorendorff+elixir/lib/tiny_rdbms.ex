@@ -434,22 +434,24 @@ defmodule SqlExpr do
     end
   end
 
+  # This has the unfortunate side effect of obliterating any previously compiled function.
   def compile(columns, expr) do
     row = {:row, [], SqlExpr}
     body = compile_expr(columns, row, expr)
 
-    # The quoted form of the whole function.
+    :code.delete(SqlExpr.Tmp)
+    :code.purge(SqlExpr.Tmp)
+
+    # The quoted form of the module to compile.
     code = quote do
-      fn (unquote(row)) -> unquote(body) end
+      def get_fun() do
+        fn (unquote(row)) -> unquote(body) end
+      end
     end
-    IO.inspect(code)
 
     # Compile it and return the compiled fn.
-    {result, errs} = Code.eval_quoted(code)
-    for e <- errs do
-      IO.inspect(e)
-    end
-    result
+    {:module, tmp, _, _} = Module.create(SqlExpr.Tmp, code, Macro.Env.location(__ENV__))
+    tmp.get_fun()
   end
 
   def eval(columns, row, expr) do
