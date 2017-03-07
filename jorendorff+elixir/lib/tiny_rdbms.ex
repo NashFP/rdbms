@@ -34,9 +34,9 @@ defmodule TinyRdbms do
     #IO.inspect(ast)
 
     combinations_from(database, ast.from)
-      |> apply_where(ast.where)
+      |> RowSet.filter(ast.where)
       |> apply_order(ast.order)
-      |> apply_select(ast.select)
+      |> RowSet.map(ast.select)
   end
 
   defp table!(database, table_name) do
@@ -55,55 +55,6 @@ defmodule TinyRdbms do
     t = table!(database, table_name)
     ts = combinations_from(database, rest)
     RowSet.product(t, ts)
-  end
-
-  # Evaluate WHERE clause.
-  defp apply_where(data, :nil) do
-    data
-  end
-  defp apply_where({columns, rows}, where_expr) do
-    t0 = System.monotonic_time(:millisecond)
-
-    # -------------------------------------------------------------------------
-    # Use only one of the next two lines (the other should be commented out)
-    #f = fn (row) -> SqlExpr.eval(columns, row, where_expr) end  # INTERPRETER
-    f = SqlExpr.compile(columns, where_expr)                    # COMPILER
-    # -------------------------------------------------------------------------
-
-    t1 = System.monotonic_time(:millisecond)
-    filtered_rows = Enum.filter(rows, fn(row) ->
-      SqlValue.is_truthy?(f.(row))
-    end)
-    t2 = System.monotonic_time(:millisecond)
-    IO.puts("compilation time: #{t1 - t0}")
-    IO.puts("run time:         #{t2 - t1}")
-
-    {columns, filtered_rows}
-  end
-
-  # Evaluate SELECT clause (projection).
-  defp apply_select({columns, rows}, exprs) do
-    selected_columns =
-      exprs
-      |> Enum.with_index()
-      |> Enum.map(fn {expr, index} -> SqlExpr.column_info(expr, columns, index) end)
-      |> Columns.new()
-
-    projected_rows =
-      if Enum.any?(exprs, &SqlExpr.is_aggregate?/1) do
-        # Implicitly group all rows into one big group, if selecting an aggregate.
-        [
-          Enum.map(exprs, fn(expr) -> SqlExpr.eval_aggregate(columns, rows, expr) end)
-          |> List.to_tuple()
-        ]
-      else
-        Enum.map(rows, fn(row) ->
-          # For each row, evaluate each selected expression.
-          Enum.map(exprs, fn(expr) -> SqlExpr.eval(columns, row, expr) end)
-          |> List.to_tuple()
-        end)
-      end
-    {selected_columns, projected_rows}
   end
 
   # Apply ORDER BY clause to the result set.
@@ -237,6 +188,47 @@ defmodule RowSet do
         List.to_tuple(Tuple.to_list(a) ++ Tuple.to_list(b))
       end
     {cols, rows}
+  end
+
+  # Evaluate WHERE clause.
+  def filter(data, :nil) do
+    data
+  end
+  def filter({columns, rows}, cond_expr) do
+    # -------------------------------------------------------------------------
+    # Use only one of the next two lines (the other should be commented out)
+    #f = fn (row) -> SqlExpr.eval(columns, row, cond_expr) end  # INTERPRETER
+    f = SqlExpr.compile(columns, cond_expr)                    # COMPILER
+    # -------------------------------------------------------------------------
+    filtered_rows = Enum.filter(rows, fn(row) ->
+      SqlValue.is_truthy?(f.(row))
+    end)
+    {columns, filtered_rows}
+  end
+
+  # Evaluate SELECT clause (projection).
+  def map({columns, rows}, exprs) do
+    selected_columns =
+      exprs
+      |> Enum.with_index()
+      |> Enum.map(fn {expr, index} -> SqlExpr.column_info(expr, columns, index) end)
+      |> Columns.new()
+
+    projected_rows =
+      if Enum.any?(exprs, &SqlExpr.is_aggregate?/1) do
+        # Implicitly group all rows into one big group, if selecting an aggregate.
+        [
+          Enum.map(exprs, fn(expr) -> SqlExpr.eval_aggregate(columns, rows, expr) end)
+          |> List.to_tuple()
+        ]
+      else
+        Enum.map(rows, fn(row) ->
+          # For each row, evaluate each selected expression.
+          Enum.map(exprs, fn(expr) -> SqlExpr.eval(columns, row, expr) end)
+          |> List.to_tuple()
+        end)
+      end
+    {selected_columns, projected_rows}
   end
 end
 
