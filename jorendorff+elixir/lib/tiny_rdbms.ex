@@ -33,8 +33,11 @@ defmodule TinyRdbms do
     ast = Sql.parse_select_stmt!(query)
     #IO.inspect(ast)
 
-    combinations_from(database, ast.from)
-      |> RowSet.filter(ast.where)
+    {conditions_by_table, leftover_condition_expr} = plan_query(database, ast)
+
+    # Actually run the query at last!
+    combine(database, ast.from, conditions_by_table)
+      |> RowSet.filter(leftover_condition_expr)
       |> apply_order(ast.order)
       |> RowSet.map(ast.select)
   end
@@ -47,18 +50,57 @@ defmodule TinyRdbms do
     t
   end
 
-  defp combinations_from(_, []), do: RowSet.one()
-  defp combinations_from(database, [table_name]) do
-    table!(database, table_name)
+  defp combine(_, [], _) do
+    RowSet.one()
   end
-  defp combinations_from(database, [table_name | rest]) do
-    t = table!(database, table_name)
-    ts = combinations_from(database, rest)
-    RowSet.product(t, ts)
+  defp combine(database, [table_name|more_tables], conds_by_table) do
+    table_cond =
+      Map.get(conds_by_table, String.downcase(table_name), [])
+      |> SqlExpr.join_and()
+
+    table!(database, table_name)
+    |> RowSet.filter(table_cond)
+    |> RowSet.product(combine(database, more_tables, conds_by_table))
+  end
+
+  defp plan_query(database, ast) do
+    # Some WHERE conditions, like `Genre.GenreId = 6`, apply to a single
+    # table. We can save time by checking these conditions first, before
+    # joining tables.
+
+    # In order to identify these "easy" conditions we need column info for all
+    # tables involved in the query.
+    all_column_info =
+      ast.from
+      |> Enum.map(fn(name) -> RowSet.columns(table!(database, name)) end)
+      |> Enum.reduce(&Columns.concat/2)
+
+    # Now, for each table, find all "easy" conditions that apply only to that
+    # table. SqlExpr.tables_used() does most of the work.
+    conds_by_table =
+      case ast.where do
+        nil -> %{}  # No WHERE clause, skip this work
+        expr ->
+          SqlExpr.split_and(expr)  # break the query down into conditions
+          |> Enum.group_by(fn(expr) ->
+            case SqlExpr.tables_used(expr, all_column_info) do
+              [table] -> table
+              _ -> 0
+            end
+          end)
+      end
+
+    # Other conditions involve no tables or multiple tables; combine them back
+    # into a single SQL expression.
+    leftover_conds =
+      Map.get(conds_by_table, 0, [])
+      |> SqlExpr.join_and()
+
+    {conds_by_table, leftover_conds}
   end
 
   # Apply ORDER BY clause to the result set.
-  defp apply_order(data, :nil) do
+  defp apply_order(data, nil) do
     data
   end
   defp apply_order({columns, rows}, order) do
@@ -180,18 +222,23 @@ defmodule RowSet do
   end
 
   def product(rs1, rs2) do
-    {cols1, rows1} = rs1
-    {cols2, rows2} = rs2
-    cols = Columns.concat(cols1, cols2)
-    rows =
-      for a <- rows1, b <- rows2 do
-        List.to_tuple(Tuple.to_list(a) ++ Tuple.to_list(b))
-      end
-    {cols, rows}
+    cond do
+      rows(rs1) == [{}] -> rs2  # optimization: 1 * A = A
+      rows(rs2) == [{}] -> rs1  # optimization: A * 1 = A
+      true ->
+        {cols1, rows1} = rs1
+        {cols2, rows2} = rs2
+        cols = Columns.concat(cols1, cols2)
+        rows =
+          for a <- rows1, b <- rows2 do
+            List.to_tuple(Tuple.to_list(a) ++ Tuple.to_list(b))
+          end
+        {cols, rows}
+    end
   end
 
   # Evaluate WHERE clause.
-  def filter(data, :nil) do
+  def filter(data, true) do
     data
   end
   def filter({columns, rows}, cond_expr) do
@@ -341,6 +388,34 @@ defmodule SqlExpr do
     end
   end
 
+  @doc """
+  Return the list of tables used by the given expression.
+
+  Since an identifier like `GenreId` might refer to columns with that name in
+  several tables, the caller has to provide column info for the context where
+  the expression appears.
+
+  Raises an error if `expr` uses any identifiers that aren't in
+  `columns`, or if `expr` uses `*` (except in `COUNT(*)`).
+  """
+  def tables_used(expr, columns) do
+    case expr do
+      {:identifier, name} ->
+        {_, t, _, _} = Columns.get(columns, String.downcase(name))
+        [t]
+      {:., table_name, column_name} ->
+        key = {:., String.downcase(table_name), String.downcase(column_name)}
+        {_, t, _, _} = Columns.get(columns, key)
+        [t]
+      {:number, _} -> []
+      {:apply, "COUNT", _} -> []  # for now, the only function is COUNT()
+      {:string, _} -> []
+      {:is_null, x} -> tables_used(x, columns)
+      {_, lhs, rhs} -> tables_used(lhs, columns) ++ tables_used(rhs, columns)
+      :* -> raise ArgumentError, message: "* used in WHERE clause"
+    end
+  end
+
   def column_info(expr, columns, index) do
     case expr do
       {:identifier, name} ->
@@ -472,6 +547,26 @@ defmodule SqlExpr do
       _ -> raise ArgumentError, message: "internal error: unrecognized expr #{inspect(expr)}"
     end
   end
+
+  @doc """
+  Break a boolean expression into a list of conditions which must all be met.
+
+  If the argument is an AND expression, return a list of the operands of AND.
+  Otherwise, return a list containing just the argument expression.
+  """
+  def split_and({:and, lhs, rhs}) do
+    split_and(lhs) ++ split_and(rhs)
+  end
+  def split_and(expr) do
+    [expr]
+  end
+
+  @doc """
+  Combine a list of boolean expressions with AND.
+  """
+  def join_and([]), do: true
+  def join_and([expr]), do: expr
+  def join_and([lhs|rhs]), do: {:and, lhs, join_and(rhs)}
 
 end
 
@@ -665,7 +760,7 @@ defmodule Sql do
         if Keyword.get(keywords, :required, false) do
           raise ArgumentError, message: "#{keyword} expected"
         else
-          {Map.put(ast, keyword, :nil), sql}
+          {Map.put(ast, keyword, nil), sql}
         end
     end
   end
