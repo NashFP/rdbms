@@ -32,17 +32,12 @@ defmodule TinyRdbms do
   def run_query(database, query) do
     ast = SqlParser.parse_select_stmt!(query)
     #IO.inspect(ast)
-
-    {conditions_by_table, leftover_condition_expr} = plan_query(database, ast)
-
-    # Actually run the query at last!
-    combine(database, ast.from, conditions_by_table)
-      |> RowSet.filter(leftover_condition_expr)
-      |> apply_order(ast.order)
-      |> RowSet.map(ast.select)
+    plan = QueryPlan.plan_query(database, ast)
+    #IO.inspect(plan)
+    QueryPlan.run(database, plan)
   end
 
-  defp table!(database, table_name) do
+  def table!(database, table_name) do
     t = Map.get(database, String.downcase(table_name))
     if t == nil do
       raise ArgumentError, message: "no such table: #{table_name}"
@@ -50,81 +45,12 @@ defmodule TinyRdbms do
     t
   end
 
-  defp combine(_, [], _) do
-    RowSet.one()
-  end
-  defp combine(database, [table_ast|more_tables], conds_by_table) do
-    {table_name, alias_name} =
-      case table_ast do
-        {:alias, t, a} -> {t, a}
-        t -> {t, t}
-      end
-
-    table_cond =
-      Map.get(conds_by_table, String.downcase(alias_name), [])
-      |> SqlExpr.join_and()
-
-    table!(database, table_name)
-    |> RowSet.apply_alias(alias_name)
-    |> RowSet.filter(table_cond)
-    |> RowSet.product(combine(database, more_tables, conds_by_table))
-  end
-
-  defp table_column_info(database, {:alias, table_name, alias_name}) do
+  def table_column_info(database, {:alias, table_name, alias_name}) do
     table_column_info(database, table_name)
     |> Columns.apply_table_alias(alias_name)
   end
-  defp table_column_info(database, table_name) do
+  def table_column_info(database, table_name) do
     RowSet.columns(table!(database, table_name))
-  end
-
-  defp plan_query(database, ast) do
-    # Some WHERE conditions, like `Genre.GenreId = 6`, apply to a single
-    # table. We can save time by checking these conditions first, before
-    # joining tables.
-
-    # In order to identify these "easy" conditions we need column info for all
-    # tables involved in the query.
-    all_column_info =
-      ast.from
-      |> Enum.map(&table_column_info(database, &1))
-      |> Enum.reduce(&Columns.concat/2)
-
-    # Now, for each table, find all "easy" conditions that apply only to that
-    # table. SqlExpr.tables_used() does most of the work.
-    conds_by_table =
-      case ast.where do
-        nil -> %{}  # No WHERE clause, skip this work
-        expr ->
-          SqlExpr.split_and(expr)  # break the query down into conditions
-          |> Enum.group_by(fn(expr) ->
-            case SqlExpr.tables_used(expr, all_column_info) do
-              [table] -> String.downcase(table)
-              _ -> 0
-            end
-          end)
-      end
-
-    # Other conditions involve no tables or multiple tables; combine them back
-    # into a single SQL expression.
-    leftover_conds =
-      Map.get(conds_by_table, 0, [])
-      |> SqlExpr.join_and()
-
-    {conds_by_table, leftover_conds}
-  end
-
-  # Apply ORDER BY clause to the result set.
-  defp apply_order(data, nil) do
-    data
-  end
-  defp apply_order({:RowSet, columns, rows, _}, order) do
-    sorted_rows = Enum.sort_by(rows, fn row ->
-      Enum.map(order, fn expr ->
-        SqlExpr.eval(columns, row, expr)
-      end)
-    end)
-    RowSet.new(columns, sorted_rows)
   end
 end
 
@@ -322,6 +248,105 @@ defmodule RowSet do
         end)
       end
     new(selected_columns, projected_rows)
+  end
+end
+
+defmodule QueryPlan do
+  def plan_query(database, ast) do
+    # Some WHERE conditions, like `Genre.GenreId = 6`, apply to a single
+    # table. We can save time by checking these conditions first, before
+    # joining tables.
+
+    # In order to identify these "easy" conditions we need column info for all
+    # tables involved in the query.
+    all_column_info =
+      ast.from
+      |> Enum.map(&TinyRdbms.table_column_info(database, &1))
+      |> Enum.reduce(&Columns.concat/2)
+
+    # Now, for each table, find all "easy" conditions that apply only to that
+    # table. SqlExpr.tables_used() does most of the work.
+    conds_by_table =
+      case ast.where do
+        nil -> %{}  # No WHERE clause, skip this work
+        expr ->
+          SqlExpr.split_and(expr)  # break the query down into conditions
+          |> Enum.group_by(fn(expr) ->
+            case SqlExpr.tables_used(expr, all_column_info) do
+              [table] -> String.downcase(table)
+              _ -> 0
+            end
+          end)
+      end
+
+    plan = {:combine, ast.from, conds_by_table}
+
+    # Other conditions involve no tables or multiple tables; combine them back
+    # into a single SQL expression.
+    leftover_conds =
+      Map.get(conds_by_table, 0, [])
+      |> SqlExpr.join_and()
+    plan =
+      case leftover_conds do
+        true -> plan
+        expr -> {:filter, expr, plan}
+      end
+
+    # ORDER BY clause
+    plan =
+      case ast.order do
+        nil -> plan
+        cols -> {:sort, cols, plan}
+      end
+
+    # SELECT clause
+    {:map, ast.select, plan}
+  end
+
+  def run(database, plan) do
+    case plan do
+      {:combine, tables, conditions_by_table} ->
+        combine(database, tables, conditions_by_table)
+      {:filter, expr, subplan} ->
+        run(database, subplan) |> RowSet.filter(expr)
+      {:sort, cols, subplan} ->
+        run(database, subplan) |> apply_order(cols)
+      {:map, exprs, subplan} ->
+        run(database, subplan) |> RowSet.map(exprs)
+    end
+  end
+
+  defp combine(_, [], _) do
+    RowSet.one()
+  end
+  defp combine(database, [table_ast|more_tables], conds_by_table) do
+    {table_name, alias_name} =
+      case table_ast do
+        {:alias, t, a} -> {t, a}
+        t -> {t, t}
+      end
+
+    table_cond =
+      Map.get(conds_by_table, String.downcase(alias_name), [])
+      |> SqlExpr.join_and()
+
+    TinyRdbms.table!(database, table_name)
+    |> RowSet.apply_alias(alias_name)
+    |> RowSet.filter(table_cond)
+    |> RowSet.product(combine(database, more_tables, conds_by_table))
+  end
+
+  # Apply ORDER BY clause to the result set.
+  defp apply_order(data, nil) do
+    data
+  end
+  defp apply_order({:RowSet, columns, rows, _}, order) do
+    sorted_rows = Enum.sort_by(rows, fn row ->
+      Enum.map(order, fn expr ->
+        SqlExpr.eval(columns, row, expr)
+      end)
+    end)
+    RowSet.new(columns, sorted_rows)
   end
 end
 
