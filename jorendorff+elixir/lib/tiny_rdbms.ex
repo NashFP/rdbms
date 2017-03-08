@@ -30,7 +30,7 @@ defmodule TinyRdbms do
   end
 
   def run_query(database, query) do
-    ast = Sql.parse_select_stmt!(query)
+    ast = SqlParser.parse_select_stmt!(query)
     #IO.inspect(ast)
 
     {conditions_by_table, leftover_condition_expr} = plan_query(database, ast)
@@ -597,7 +597,7 @@ defmodule SqlExpr do
 end
 
 
-defmodule Sql do
+defmodule SqlParser do
 
   @doc """
   Break the given SQL string `s` into tokens.
@@ -609,11 +609,11 @@ defmodule Sql do
 
   ## Examples
 
-      iex> Sql.tokenize("SELECT * FROM Student")
+      iex> SqlParser.tokenize("SELECT * FROM Student")
       [:select, :*, :from, {:identifier, "Student"}]
-      iex> Sql.tokenize("WHERE name = '")
+      iex> SqlParser.tokenize("WHERE name = '")
       [:where, {:identifier, "name"}, :=, {:error, "unrecognized character: '"}]
-      iex> Sql.tokenize("1 <> 0.99")
+      iex> SqlParser.tokenize("1 <> 0.99")
       [{:number, 1}, :<>, {:number, Decimal.new("0.99")}]
   """
   def tokenize(s) do

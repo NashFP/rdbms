@@ -37,7 +37,7 @@ end
 
 defmodule SqlTest do
   use ExUnit.Case
-  doctest Sql
+  doctest SqlParser
   doctest SqlValue
   doctest SqlExpr
 end
