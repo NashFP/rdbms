@@ -209,6 +209,29 @@ defmodule RowSet do
       {:RowSet, columns, rows, indexes}
   end
 
+  defp get_hash_index({:RowSet, columns, rows, indexes}, column_name) do
+    column_index = Columns.get_index(columns, column_name)
+    case indexes[column_name] do
+      nil ->
+        rows |> Enum.group_by(fn(row) -> elem(row, column_index) end)
+      hash_index ->
+        hash_index
+    end
+  end
+
+  def join(rs1, col1, rs2, col2) do
+    {:RowSet, cols1, rows1, _} = rs1
+    {:RowSet, cols2, _, _} = rs2
+    col1_index = Columns.get_index(cols1, col1)
+    rs2 = get_hash_index(rs2, col2)
+    cols = Columns.concat(cols1, cols2)
+    rows =
+      for a <- rows1, b <- Map.get(rs2, elem(a, col1_index), []) do
+        List.to_tuple(Tuple.to_list(a) ++ Tuple.to_list(b))
+      end
+    new(cols, rows)
+  end
+
   # Evaluate WHERE clause.
   def filter(row_set, true) do
     row_set
@@ -280,8 +303,52 @@ defmodule QueryPlan do
     {filter(SqlExpr.join_and(selected_conds), plan), remaining_conds}
   end
 
-  def plan_join(plan1, tables1, plan2, tables2, conds) do
-    {product(plan1, plan2), conds}
+  defp expand_column_ref(columns, {:., t, c}), do: {:., t, c}
+  defp expand_column_ref(columns, {:identifier, c}) do
+    {_, t, _, _} = Columns.get(columns, String.downcase(c))
+    {:., t, c}
+  end
+  defp expand_column_ref(_, _), do: nil
+
+  # See if the condition given as the second argument indicates a join on the
+  # two given disjoint sets of tables. If so, return `{i, col1, col2}`.
+  # If not, return nil.
+  defp condition_as_join(i, {:=, lhs, rhs}, tables1, tables2, all_column_info) do
+    case {expand_column_ref(all_column_info, lhs),
+          expand_column_ref(all_column_info, rhs)} do
+      {{:., t1, c1}, {:., t2, c2}} ->
+        t1 = String.downcase(t1)
+        t2 = String.downcase(t2)
+        c1 = String.downcase(c1)
+        c2 = String.downcase(c2)
+        cond do
+          Enum.member?(tables1, t1) && Enum.member?(tables2, t2) ->
+            {i, {:., t1, c1}, {:., t2, c2}}
+          Enum.member?(tables1, t2) && Enum.member?(tables2, t1) ->
+            {i, {:., t2, c2}, {:., t1, c1}}
+          true -> nil
+        end
+      _ -> nil
+    end
+  end
+  defp condition_as_join(_, _, _, _, _), do: nil
+
+  defp plan_join(1, _, plan2, _, _, conds) do
+    {plan2, conds}
+  end
+  defp plan_join(plan1, tables1, plan2, tables2, all_column_info, conds) do
+    join =
+      Enum.with_index(conds)
+      |> Enum.find_value(fn {c, i} ->
+        condition_as_join(i, c, tables1, tables2, all_column_info)
+      end)
+
+    case join do
+      nil ->
+        {product(plan1, plan2), conds}
+      {i, col1, col2} ->
+        {{:join, plan1, col1, plan2, col2}, List.delete_at(conds, i)}
+    end
   end
 
   def plan_query(database, ast) do
@@ -328,7 +395,7 @@ defmodule QueryPlan do
           plan_join(
             plan_so_far, tables_so_far,
             plan_for_table, [String.downcase(alias_name)],
-            remaining_conds)
+            all_column_info, remaining_conds)
         tables_so_far = [String.downcase(alias_name) | tables_so_far]
 
         # Filter again after joining.
@@ -364,6 +431,8 @@ defmodule QueryPlan do
         run(database, subplan) |> apply_order(cols)
       {:map, exprs, subplan} ->
         run(database, subplan) |> RowSet.map(exprs)
+      {:join, t1, c1, t2, c2} ->
+        RowSet.join(run(database, t1), c1, run(database, t2), c2)
     end
   end
 
