@@ -259,10 +259,37 @@ defmodule QueryPlan do
   defp filter(true, x), do: x
   defp filter(c, x), do: {:filter, c, x}
 
+  # If any expressions in `conditions` refer only to tables in `plan_tables`,
+  # apply them to the given `plan`.
+  #
+  # Returns either `{plan, conditions}`
+  # or `{filter(selected_conditions, plan), remaining_conditions}`.
+  defp apply_filters(plan, conditions, all_column_info, plan_tables) do
+    # Impl note: tables_used is computed many times, making the overall alg O(n^3) or so.
+    # It would be easy to cache the result.
+    partitioned =
+      conditions
+      |> Enum.group_by(fn(c) ->
+        SqlExpr.tables_used(c, all_column_info)
+        |> Enum.all?(&Enum.member?(plan_tables, String.downcase(&1)))
+      end)
+
+    selected_conds = Map.get(partitioned, true, [])
+    remaining_conds = Map.get(partitioned, false, [])
+
+    {filter(SqlExpr.join_and(selected_conds), plan), remaining_conds}
+  end
+
   def plan_query(database, ast) do
     # Some WHERE conditions, like `Genre.GenreId = 6`, apply to a single
-    # table. We can save time by checking these conditions first, before
-    # joining tables.
+    # table. We can save time by checking these conditions as early as possible,
+    # before joining tables.
+
+    conds =
+      case ast.where do
+        nil -> []
+        expr -> SqlExpr.split_and(expr)
+      end
 
     # In order to identify these "easy" conditions we need column info for all
     # tables involved in the query.
@@ -271,43 +298,37 @@ defmodule QueryPlan do
       |> Enum.map(&TinyRdbms.table_column_info(database, &1))
       |> Enum.reduce(&Columns.concat/2)
 
-    # Now, for each table, find all "easy" conditions that apply only to that
-    # table. SqlExpr.tables_used() does most of the work.
-    conds_by_table =
-      case ast.where do
-        nil -> %{}  # No WHERE clause, skip this work
-        expr ->
-          SqlExpr.split_and(expr)  # break the query down into conditions
-          |> Enum.group_by(fn(expr) ->
-            case SqlExpr.tables_used(expr, all_column_info) do
-              [table] -> String.downcase(table)
-              _ -> 0
-            end
-          end)
-      end
-
-    plan =
+    # Construct the basic plan by starting with the trivial plan called `1`
+    # and adding tables one by one (using a `reduce`).
+    {plan, _, []} =
       ast.from
-      |> Enum.reduce(1, fn(table_ast, acc) ->
+      |> Enum.reduce({1, [], conds}, fn(table_ast, acc) ->
+        # Add one table to the plan. First, unpack the work we've already done.
+        {plan_so_far, tables_so_far, remaining_conds} = acc
+
+        # Now figure out some basics about the new table we're adding.
         {table_name, alias_name} =
           case table_ast do
             {:alias, t, a} -> {t, a}
             t -> {t, t}
           end
+        plan_for_table = {:table, table_name, alias_name}
 
-        table_cond =
-          Map.get(conds_by_table, String.downcase(alias_name), [])
-          |> SqlExpr.join_and()
+        # Filter this table as much as possible before joining.
+        {plan_for_table, remaining_conds} =
+          apply_filters(plan_for_table, remaining_conds, all_column_info,
+            [String.downcase(alias_name)])
 
-        product(acc, filter(table_cond, {:table, table_name, alias_name}))
+        # Join.
+        plan_so_far = product(plan_so_far, plan_for_table)
+        tables_so_far = [String.downcase(alias_name) | tables_so_far]
+
+        # Filter again after joining.
+        {plan_so_far, remaining_conds} =
+          apply_filters(plan_so_far, remaining_conds, all_column_info, tables_so_far)
+
+        {plan_so_far, tables_so_far, remaining_conds}
       end)
-
-    # Other conditions involve no tables or multiple tables; combine them back
-    # into a single SQL expression.
-    leftover_conds =
-      Map.get(conds_by_table, 0, [])
-      |> SqlExpr.join_and()
-    plan = filter(leftover_conds, plan)
 
     # ORDER BY clause
     plan =
