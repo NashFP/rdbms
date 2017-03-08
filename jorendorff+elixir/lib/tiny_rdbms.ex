@@ -280,6 +280,10 @@ defmodule QueryPlan do
     {filter(SqlExpr.join_and(selected_conds), plan), remaining_conds}
   end
 
+  def plan_join(plan1, tables1, plan2, tables2, conds) do
+    {product(plan1, plan2), conds}
+  end
+
   def plan_query(database, ast) do
     # Some WHERE conditions, like `Genre.GenreId = 6`, apply to a single
     # table. We can save time by checking these conditions as early as possible,
@@ -320,7 +324,11 @@ defmodule QueryPlan do
             [String.downcase(alias_name)])
 
         # Join.
-        plan_so_far = product(plan_so_far, plan_for_table)
+        {plan_so_far, remaining_conds} =
+          plan_join(
+            plan_so_far, tables_so_far,
+            plan_for_table, [String.downcase(alias_name)],
+            remaining_conds)
         tables_so_far = [String.downcase(alias_name) | tables_so_far]
 
         # Filter again after joining.
