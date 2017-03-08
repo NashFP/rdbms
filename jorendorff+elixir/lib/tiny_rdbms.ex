@@ -118,13 +118,13 @@ defmodule TinyRdbms do
   defp apply_order(data, nil) do
     data
   end
-  defp apply_order({columns, rows}, order) do
+  defp apply_order({:RowSet, columns, rows, _}, order) do
     sorted_rows = Enum.sort_by(rows, fn row ->
       Enum.map(order, fn expr ->
         SqlExpr.eval(columns, row, expr)
       end)
     end)
-    {columns, sorted_rows}
+    RowSet.new(columns, sorted_rows)
   end
 end
 
@@ -167,49 +167,50 @@ defmodule Columns do
     elem(get(columns, name), 3)
   end
 
-  def names({columns, _}) do
-    Tuple.to_list(columns)
+  def names(columns) do
+    list(columns)
       |> Enum.map(fn {_, _, name, _} -> name end)
       |> List.to_tuple()
   end
 
-  def row_from_strings(columns, strings) do
-    {column_tuple, _} = columns
+  def list({columns, _}) do
+    Tuple.to_list(columns)
+  end
 
-    Enum.zip(Tuple.to_list(column_tuple), strings)
+  def row_from_strings(columns, strings) do
+    Enum.zip(list(columns), strings)
       |> Enum.map(fn {{_, _, _, type}, s} -> SqlValue.from_string(type, s) end)
       |> List.to_tuple()
   end
 
-  def concat({columns1, _}, {columns2, _}) do
-    columns1 = Tuple.to_list(columns1)
+  def concat(columns1, columns2) do
+    columns1 = list(columns1)
     n = length(columns1)
     columns2 =
-      for {index, t, c, ty} <- Tuple.to_list(columns2) do
+      for {index, t, c, ty} <- list(columns2) do
         {n + index, t, c, ty}
       end
     Columns.new(columns1 ++ columns2)
   end
 
-  def apply_table_alias({columns, _}, alias_name) do
-    columns
-    |> Tuple.to_list()
+  def apply_table_alias(columns, alias_name) do
+    list(columns)
     |> Enum.map(fn {i, _, c, ty} -> {i, alias_name, c, ty} end)
     |> Columns.new()
   end
 end
 
 defmodule RowSet do
-  def new(columns, rows) do
-    {columns, rows}
+  def new(columns, rows, indexes \\ %{}) do
+    {:RowSet, columns, rows, indexes}
   end
 
   def one() do
-    RowSet.new(Columns.new([]), [{}])
+    new(Columns.new([]), [{}])
   end
 
-  def rows({_, rows}), do: rows
-  def columns({columns, _}), do: columns
+  def columns({:RowSet, columns, _, _}), do: columns
+  def rows({:RowSet, _, rows, _}), do: rows
 
   def load!(table_name, filename) do
     raw_rows = File.stream!(filename) |> CSV.decode() |> Enum.to_list
@@ -229,21 +230,21 @@ defmodule RowSet do
     rows = tl(raw_rows)
       |> Enum.map(fn row -> Columns.row_from_strings(columns, row) end)
 
-    new(columns, rows)
+    with_indexes(new(columns, rows))
   end
 
-  def apply_alias({columns, rows}, name) do
-    {Columns.apply_table_alias(columns, name), rows}
+  def apply_alias({:RowSet, columns, rows, indexes}, name) do
+    new(Columns.apply_table_alias(columns, name), rows, indexes)
   end
 
   @doc """
   Dump a RowSet to stdout.
   """
   def inspect(row_set) do
-    headings = Columns.names(RowSet.columns(row_set))
+    headings = Columns.names(columns(row_set))
     IO.inspect(headings)
     IO.puts("----")
-    RowSet.rows(row_set)
+    rows(row_set)
       |> Enum.map(&IO.inspect/1)
   end
 
@@ -252,22 +253,41 @@ defmodule RowSet do
       rows(rs1) == [{}] -> rs2  # optimization: 1 * A = A
       rows(rs2) == [{}] -> rs1  # optimization: A * 1 = A
       true ->
-        {cols1, rows1} = rs1
-        {cols2, rows2} = rs2
+        {:RowSet, cols1, rows1, _} = rs1
+        {:RowSet, cols2, rows2, _} = rs2
         cols = Columns.concat(cols1, cols2)
         rows =
           for a <- rows1, b <- rows2 do
             List.to_tuple(Tuple.to_list(a) ++ Tuple.to_list(b))
           end
-        {cols, rows}
+        new(cols, rows)
     end
   end
 
-  # Evaluate WHERE clause.
-  def filter(data, true) do
-    data
+  @doc """
+  Return a RowSet with the same columns and data as this one,
+  plus an index for each integer column.
+  """
+  def with_indexes({:RowSet, columns, rows, indexes}) do
+    indexes =
+      Columns.list(columns)
+      |> Enum.reduce(indexes, fn (col, acc) ->
+          {i, _, _, ty} = col
+          if ty == :int && !Map.has_key?(acc, i) do
+            col_index = rows |> Enum.group_by(fn(row) -> elem(row, i) end)
+            Map.put(acc, i, col_index)
+          else
+            acc
+          end
+        end)
+      {:RowSet, columns, rows, indexes}
   end
-  def filter({columns, rows}, cond_expr) do
+
+  # Evaluate WHERE clause.
+  def filter(row_set, true) do
+    row_set
+  end
+  def filter({:RowSet, columns, rows, _}, cond_expr) do
     # -------------------------------------------------------------------------
     # Use only one of the next two lines (the other should be commented out)
     #f = fn (row) -> SqlExpr.eval(columns, row, cond_expr) end  # INTERPRETER
@@ -276,11 +296,11 @@ defmodule RowSet do
     filtered_rows = Enum.filter(rows, fn(row) ->
       SqlValue.is_truthy?(f.(row))
     end)
-    {columns, filtered_rows}
+    new(columns, filtered_rows)
   end
 
   # Evaluate SELECT clause (projection).
-  def map({columns, rows}, exprs) do
+  def map({:RowSet, columns, rows, _}, exprs) do
     selected_columns =
       exprs
       |> Enum.with_index()
@@ -301,7 +321,7 @@ defmodule RowSet do
           |> List.to_tuple()
         end)
       end
-    {selected_columns, projected_rows}
+    new(selected_columns, projected_rows)
   end
 end
 
