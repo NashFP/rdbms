@@ -252,6 +252,13 @@ defmodule RowSet do
 end
 
 defmodule QueryPlan do
+  defp product(1, x), do: x
+  defp product(x, 1), do: x
+  defp product(x, y), do: {:product, x, y}
+
+  defp filter(true, x), do: x
+  defp filter(c, x), do: {:filter, c, x}
+
   def plan_query(database, ast) do
     # Some WHERE conditions, like `Genre.GenreId = 6`, apply to a single
     # table. We can save time by checking these conditions first, before
@@ -279,18 +286,28 @@ defmodule QueryPlan do
           end)
       end
 
-    plan = {:combine, ast.from, conds_by_table}
+    plan =
+      ast.from
+      |> Enum.reduce(1, fn(table_ast, acc) ->
+        {table_name, alias_name} =
+          case table_ast do
+            {:alias, t, a} -> {t, a}
+            t -> {t, t}
+          end
+
+        table_cond =
+          Map.get(conds_by_table, String.downcase(alias_name), [])
+          |> SqlExpr.join_and()
+
+        product(acc, filter(table_cond, {:table, table_name, alias_name}))
+      end)
 
     # Other conditions involve no tables or multiple tables; combine them back
     # into a single SQL expression.
     leftover_conds =
       Map.get(conds_by_table, 0, [])
       |> SqlExpr.join_and()
-    plan =
-      case leftover_conds do
-        true -> plan
-        expr -> {:filter, expr, plan}
-      end
+    plan = filter(leftover_conds, plan)
 
     # ORDER BY clause
     plan =
@@ -305,8 +322,13 @@ defmodule QueryPlan do
 
   def run(database, plan) do
     case plan do
-      {:combine, tables, conditions_by_table} ->
-        combine(database, tables, conditions_by_table)
+      1 ->
+        RowSet.one()
+      {:table, table_name, alias_name} ->
+        TinyRdbms.table!(database, table_name)
+        |> RowSet.apply_alias(alias_name)
+      {:product, a, b} ->
+        RowSet.product(run(database, a), run(database, b))
       {:filter, expr, subplan} ->
         run(database, subplan) |> RowSet.filter(expr)
       {:sort, cols, subplan} ->
@@ -314,26 +336,6 @@ defmodule QueryPlan do
       {:map, exprs, subplan} ->
         run(database, subplan) |> RowSet.map(exprs)
     end
-  end
-
-  defp combine(_, [], _) do
-    RowSet.one()
-  end
-  defp combine(database, [table_ast|more_tables], conds_by_table) do
-    {table_name, alias_name} =
-      case table_ast do
-        {:alias, t, a} -> {t, a}
-        t -> {t, t}
-      end
-
-    table_cond =
-      Map.get(conds_by_table, String.downcase(alias_name), [])
-      |> SqlExpr.join_and()
-
-    TinyRdbms.table!(database, table_name)
-    |> RowSet.apply_alias(alias_name)
-    |> RowSet.filter(table_cond)
-    |> RowSet.product(combine(database, more_tables, conds_by_table))
   end
 
   # Apply ORDER BY clause to the result set.
