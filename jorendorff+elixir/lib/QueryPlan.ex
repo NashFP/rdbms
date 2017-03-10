@@ -26,13 +26,61 @@ defmodule QueryPlan do
     selected_conds = Map.get(partitioned, true, [])
     remaining_conds = Map.get(partitioned, false, [])
 
-    {filter(SqlExpr.join_and(selected_conds), plan), remaining_conds}
+    {plan_filters(all_column_info, plan, selected_conds), remaining_conds}
   end
 
-  defp expand_column_ref(columns, {:., t, c}), do: {:., t, c}
+  # The fallback plan for filtering a query by multiple conditions, when
+  # `plan_filters` doesn't find a way to optimize.
+  defp filter_multi(plan, conds) do
+    filter(SqlExpr.join_and(conds), plan)
+  end
+
+  # Figure out how best to apply a filter.
+  #
+  # Worst case, this returns a `:filter` plan, i.e. a linear scan of all rows
+  # produced by `plan`.  However, in some fairly common cases it returns a
+  # `:filter_by_index` plan, which runs much faster.
+  defp plan_filters(all_column_info, plan, conds) do
+    case {plan, conds} do
+      {{:table, t, a}, [{:=, left, right} | rest]} ->
+        a = String.downcase(a)
+        case {expand_column_ref(all_column_info, left), right} do
+          {{:., ^a, c}, {:number, v}} ->
+            c = String.downcase(c)
+            filter(SqlExpr.join_and(rest), {:filter_by_index, t, a, c, v})
+          {{:., ^a, c}, {:string, v}} ->
+            c = String.downcase(c)
+            filter(SqlExpr.join_and(rest), {:filter_by_index, t, a, c, v})
+          _ ->
+            case {left, expand_column_ref(all_column_info, right)} do
+              {{:number, v}, {:., ^a, c}} ->
+                c = String.downcase(c)
+                filter(SqlExpr.join_and(rest), {:filter_by_index, t, a, c, v})
+              {{:string, v}, {:., ^a, c}} ->
+                c = String.downcase(c)
+                filter(SqlExpr.join_and(rest), {:filter_by_index, t, a, c, v})
+              _ -> filter_multi(plan, conds)
+            end
+        end
+      {{:table, t, a}, [{:is_null, col_expr} | rest]} ->
+        a = String.downcase(a)
+        case expand_column_ref(all_column_info, col_expr) do
+          {:., ^a, c} ->
+            c = String.downcase(c)
+            filter(SqlExpr.join_and(rest), {:filter_by_index, t, a, c, nil})
+          _ -> filter_multi(plan, conds)
+        end
+      _ -> filter_multi(plan, conds)
+    end
+  end
+
+  defp expand_column_ref(_, {:., t, c}) do
+    {:., String.downcase(t), String.downcase(c)}
+  end
   defp expand_column_ref(columns, {:identifier, c}) do
-    {_, t, _, _} = Columns.get(columns, String.downcase(c))
-    {:., t, c}
+    c = String.downcase(c)
+    {_, t, _, _} = Columns.get(columns, c)
+    {:., String.downcase(t), c}
   end
   defp expand_column_ref(_, _), do: nil
 
@@ -43,10 +91,6 @@ defmodule QueryPlan do
     case {expand_column_ref(all_column_info, lhs),
           expand_column_ref(all_column_info, rhs)} do
       {{:., t1, c1}, {:., t2, c2}} ->
-        t1 = String.downcase(t1)
-        t2 = String.downcase(t2)
-        c1 = String.downcase(c1)
-        c2 = String.downcase(c2)
         cond do
           Enum.member?(tables1, t1) && Enum.member?(tables2, t2) ->
             {i, {:., t1, c1}, {:., t2, c2}}
@@ -153,6 +197,10 @@ defmodule QueryPlan do
         RowSet.product(run(database, a), run(database, b))
       {:filter, expr, subplan} ->
         run(database, subplan) |> RowSet.filter(expr)
+      {:filter_by_index, t, a, c, v} ->
+        TinyRdbms.table!(database, t)
+        |> RowSet.apply_alias(a)
+        |> RowSet.filter_by_index(c, v)
       {:sort, cols, subplan} ->
         run(database, subplan) |> apply_order(cols)
       {:map, exprs, subplan} ->

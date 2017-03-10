@@ -122,6 +122,13 @@ defmodule RowSet do
     new(columns, filtered_rows)
   end
 
+  # Filter to rows where the given column has the given value. This special
+  # case of `filter()` is very fast, assuming the index already exists.
+  def filter_by_index(row_set, column_name, value) do
+    filtered_rows = Map.get(get_hash_index(row_set, column_name), value, [])
+    new(columns(row_set), filtered_rows)
+  end
+
   # Evaluate SELECT clause (projection).
   def map({:RowSet, columns, rows, _}, exprs) do
     selected_columns =
