@@ -80,6 +80,37 @@ defmodule SqlParser do
     end
   end
 
+  @doc """
+  Parse a SQL `SELECT` statement.
+
+  The result is a Map with keys representing all the clauses of a `SELECT`:
+  `:select`, `:from`, `:where`, `:group`, `:having`, `:order`.
+  Most clauses are optional, so some of these keys may map to `nil`.
+
+  For example, below, there's no `GROUP BY` clause in the input,
+  so we have `group: nil` in the output.
+
+      iex> SqlParser.parse_select_stmt!(\"""
+      ...>   SELECT Title
+      ...>   FROM Album
+      ...>   WHERE ArtistId = 252
+      ...>   ORDER BY Title
+      ...> \""")
+      %{
+        select: [{:identifier, "Title"}],
+        from: ["Album"],
+        where: {:=, {:identifier, "ArtistId"}, {:number, 252}},
+        group: nil,
+        having: nil,
+        order: [identifier: "Title"]
+      }
+
+  Raises `ArgumentError` if the input string isn't a syntactically correct
+  `SELECT` statement.
+
+      iex> SqlParser.parse_select_stmt!("SELECT SELECT FROM SELECT WHERE SELECT")
+      ** (ArgumentError) identifier or literal expected
+  """
   def parse_select_stmt!(sql) do
     {%{}, tokenize(sql)} |>
       parse_clause!(:select, &parse_exprs!/1, required: true) |>

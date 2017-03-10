@@ -1,9 +1,16 @@
 defmodule SqlExpr do
   @moduledoc "Functions that inspect, compile, and evaluate parsed SQL expressions."
 
+  @doc """
+  True if the expression is an aggregate (like `COUNT(*)`).
+
+  Aggregate-ness matters because it can turn on grouping even without a `GROUP BY` clause.
+  If a query `SELECT`s any aggregates, and `GROUP BY` is not present,
+  then all matching rows are collected into on big group.
+  """
   def is_aggregate?(expr) do
     case expr do
-      {:apply, _, _} -> true
+      {:apply, "COUNT", _} -> true
       _ -> false
     end
   end
@@ -36,6 +43,15 @@ defmodule SqlExpr do
     end
   end
 
+  @doc """
+  Infer column info for the given expression, `expr`.
+
+  `columns` provides information about all columns available for use in `expr`
+  (columns of tables mentioned in the `FROM` clause).
+
+  `index` isn't used to compute anything; rather, it's part of the *answer*,
+  the column number of `expr` within the `SELECT` clause where it appears.
+  """
   def column_info(expr, columns, index) do
     case expr do
       {:identifier, name} ->
@@ -68,6 +84,7 @@ defmodule SqlExpr do
     end
   end
 
+  @doc "Evaluate an aggregate expression."
   def eval_aggregate(columns, group, expr) do
     case expr do
       {:apply, fnname, arg_exprs} ->
@@ -88,6 +105,15 @@ defmodule SqlExpr do
     quote(do: elem(unquote(row), unquote(i)))
   end
 
+  @doc """
+  Convert a parsed SQL expression `expr` to a quoted Elixir expression.
+
+  The resulting expression can be evaluated in a loop to process several rows of data.
+
+  `row` is a quoted Elixir expression, a variable name; when the expression is
+  actually executed, that variable will contain a tuple (the current row of SQL
+  data to process).
+  """
   def compile_expr(columns, row, expr) do
     case expr do
       {:identifier, x} ->

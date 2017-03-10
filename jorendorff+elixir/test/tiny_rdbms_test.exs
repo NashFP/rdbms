@@ -40,5 +40,22 @@ defmodule SqlTest do
   doctest SqlParser
   doctest SqlValue
   doctest SqlExpr
+
+  test "boolean expression compilation" do
+    row = quote(do: var!(row))
+
+    # This should produce a quoted Elixir expression, effectively the same as
+    # `quote(do: SqlValue.equals?(elem(row, 0), 256))`.
+    q = SqlExpr.compile_expr(
+      Columns.new([{0, "Album", "AlbumId", :int}, {1, "Album", "Title", :str}]),
+      row,
+      {:=, {:identifier, "AlbumId"}, {:number, 256}})
+
+    {result, _} = Code.eval_quoted(q, [row: {256, "Speak of the Devil"}])
+    assert result == true
+
+    {result, _} = Code.eval_quoted(q, [row: {238, "War"}])
+    assert result == false
+  end
 end
 
