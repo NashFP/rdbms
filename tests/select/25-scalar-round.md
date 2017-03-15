@@ -4,7 +4,7 @@
 
     SELECT COUNT(*)
     FROM Invoice
-    WHERE ROUND(Total) = 1
+    WHERE ROUND(Total) = ROUND(0.99)
 
 ## Answer
 
