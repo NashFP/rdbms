@@ -202,24 +202,11 @@ defmodule QueryPlan do
         |> RowSet.apply_alias(a)
         |> RowSet.filter_by_index(c, v)
       {:sort, cols, subplan} ->
-        run(database, subplan) |> apply_order(cols)
+        run(database, subplan) |> RowSet.order_by(cols)
       {:map, exprs, subplan} ->
         run(database, subplan) |> RowSet.map(exprs)
       {:join, t1, c1, t2, c2} ->
         RowSet.join(run(database, t1), c1, run(database, t2), c2)
     end
-  end
-
-  # Apply ORDER BY clause to the result set.
-  defp apply_order(data, nil) do
-    data
-  end
-  defp apply_order({:RowSet, columns, rows, _}, order) do
-    sorted_rows = Enum.sort_by(rows, fn row ->
-      Enum.map(order, fn expr ->
-        SqlExpr.eval(columns, row, expr)
-      end)
-    end)
-    RowSet.new(columns, sorted_rows)
   end
 end

@@ -153,4 +153,14 @@ defmodule RowSet do
       end
     new(selected_columns, projected_rows)
   end
+
+  # Apply ORDER BY clause to the result set.
+  def order_by({:RowSet, columns, rows, _}, order) do
+    sorted_rows = Enum.sort_by(rows, fn row ->
+      Enum.map(order, fn expr ->
+        SqlExpr.eval(columns, row, expr)
+      end)
+    end)
+    new(columns, sorted_rows)
+  end
 end
