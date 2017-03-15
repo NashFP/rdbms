@@ -122,13 +122,13 @@ defmodule SqlValue do
     Enum.reduce(values, start, &add/2)
   end
 
-  def apply_function("ROUND", [nil]), do: nil
-  def apply_function("ROUND", [num]) do
+  def round(nil), do: nil
+  def round(num) do
     Decimal.round(num, 0)
   end
-  def apply_function("ROUND", [nil, _]), do: nil
-  def apply_function("ROUND", [_, nil]), do: nil
-  def apply_function("ROUND", [num, places]) do
+  def round(nil, _), do: nil
+  def round(_, nil), do: nil
+  def round(num, places) do
     Decimal.round(num, places)
   end
 end

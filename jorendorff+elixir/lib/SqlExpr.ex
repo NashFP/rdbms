@@ -169,9 +169,9 @@ defmodule SqlExpr do
                 type = column_info(arg_expr, columns, 0) |> elem(3)
                 SqlValue.sum(values, type)
             end
-          _ ->
+          "ROUND" ->
             args = Enum.map(arg_exprs, fn expr -> eval_aggregate(columns, group, expr) end)
-            SqlValue.apply_function(fnname, args)
+            apply(SqlValue, :round, args)
         end
       _ ->
         eval(columns, hd(group), expr)
@@ -259,7 +259,10 @@ defmodule SqlExpr do
         SqlValue.is_null?(val)
       {:apply, fnname, arg_exprs} ->
         args = Enum.map(arg_exprs, fn expr -> eval(columns, row, expr) end)
-        SqlValue.apply_function(fnname, args)
+        case fnname do
+          "ROUND" -> apply(SqlValue, :round, args)
+          _ -> raise ArgumentError, message: "internal error: bad function #{fnname}"
+        end
       {binary_op, left_expr, right_expr} ->
         left_val = eval(columns, row, left_expr)
         right_val = eval(columns, row, right_expr)
