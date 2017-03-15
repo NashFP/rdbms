@@ -10,7 +10,12 @@ defmodule SqlExpr do
   """
   def is_aggregate?(expr) do
     case expr do
-      {:apply, "COUNT", _} -> true
+      {:apply, fnname, args} ->
+        if Enum.member?(["AVG", "COUNT", "MAX", "MIN", "SUM"], fnname) do
+          true
+        else
+          Enum.any?(args, &is_aggregate?/1)
+        end
       _ -> false
     end
   end
@@ -36,6 +41,9 @@ defmodule SqlExpr do
         [t]
       {:number, _} -> []
       {:apply, "COUNT", _} -> []  # for now, the only function is COUNT()
+      {:apply, _, args} ->
+        Enum.flat_map(args, &tables_used(&1, columns))
+        |> Enum.uniq()
       {:string, _} -> []
       {:is_null, x} -> tables_used(x, columns)
       {_, lhs, rhs} -> tables_used(lhs, columns) ++ tables_used(rhs, columns)
@@ -70,7 +78,20 @@ defmodule SqlExpr do
               else
                 :int
               end
-            {:apply, "COUNT", _} -> :int  # for now, the only function is COUNT()
+            {:apply, fnname, [arg]} ->
+              cond do
+                fnname == "COUNT" ->
+                  :int
+                fnname == "AVG" || fnname == "ROUND" ->
+                  require_numeric_type(arg, fnname, columns)
+                Enum.member?(["MAX", "MIN", "SUM"], fnname) ->
+                  numeric_aggregate_type(arg, fnname, columns)
+                true ->
+                  raise ArgumentError, message: "internal error: bad expr #{inspect(expr)}"
+              end
+            {:apply, "ROUND", [num, places]} ->
+              require_type(places, columns, "ROUND", 2, :int)
+              require_numeric_type(num, "ROUND", columns)
             {:string, _} -> :str
             {:is_null, _} -> :bool
             {:=, _, _} -> :bool
@@ -78,22 +99,79 @@ defmodule SqlExpr do
             {:and, _, _} -> :bool
             {:or, _, _} -> :bool
             :* -> :row
-            _ -> raise ArgumentError, message: "internal error: unrecognized expr #{inspect(expr)}"
+            _ -> raise ArgumentError, message: "internal error: bad expr #{inspect(expr)}"
           end
         {index, nil, nil, type}  # column has no name
     end
+  end
+
+  defp numeric_aggregate_type(arg_expr, fnname, columns) do
+    t = column_info(arg_expr, columns, 0) |> elem(3)
+    if t != :int && t != :num do
+      raise ArgumentError, message: "#{fnname}() requires a numeric argument"
+    end
+    t
+  end
+
+  defp require_numeric_type(arg_expr, fnname, columns) do
+    numeric_aggregate_type(arg_expr, fnname, columns)
+    :num
+  end
+
+  defp require_type(arg_expr, columns, fnname, arg_num, expected_type) do
+    t = column_info(arg_expr, columns, 0) |> elem(3)
+    if t != expected_type do
+      raise ArgumentError, message: "#{fnname}() requires a #{inspect(expected_type)} for argument #{arg_num}"
+    end
+    t
+  end
+
+  defp expr_type(expr, columns) do
+    column_info(expr, columns, 0) |> elem(3)
   end
 
   @doc "Evaluate an aggregate expression."
   def eval_aggregate(columns, group, expr) do
     case expr do
       {:apply, fnname, arg_exprs} ->
-        _ = Enum.map(group, fn(row) ->
-          Enum.map(arg_exprs, fn(expr) -> eval(columns, row, expr) end)
-        end)
         case String.upcase(fnname) do
-          "COUNT" -> length(group)
-          _ -> raise ArgumentError, message: "internal error: unknown function #{inspect(fnname)}"
+          "AVG" ->
+            [arg_expr] = arg_exprs
+            type = expr_type(arg_expr, columns)
+            case Enum.map(group, fn row -> eval(columns, row, arg_expr) end) do
+              [] -> nil
+              values ->
+                total = SqlValue.sum(values, type)
+                total = case type do
+                          :int -> Decimal.new(total)
+                          _ -> total
+                        end
+                Decimal.div(total, Decimal.new(length(values)))
+            end
+          "COUNT" ->
+            _ = Enum.map(group, fn(row) ->
+              Enum.map(arg_exprs, fn(expr) -> eval(columns, row, expr) end)
+            end)
+            length(group)
+          "MIN" ->
+            [arg_expr] = arg_exprs
+            Enum.map(group, fn row -> eval(columns, row, arg_expr) end)
+            |> Enum.min(fn -> nil end)
+          "MAX" ->
+            [arg_expr] = arg_exprs
+            Enum.map(group, fn row -> eval(columns, row, arg_expr) end)
+            |> Enum.max(fn -> nil end)
+          "SUM" ->
+            [arg_expr] = arg_exprs
+            case Enum.map(group, fn row -> eval(columns, row, arg_expr) end) do
+              [] -> nil  # not 0, for some reason
+              values ->
+                type = column_info(arg_expr, columns, 0) |> elem(3)
+                SqlValue.sum(values, type)
+            end
+          _ ->
+            args = Enum.map(arg_exprs, fn expr -> eval_aggregate(columns, group, expr) end)
+            SqlValue.apply_function(fnname, args)
         end
       _ ->
         eval(columns, hd(group), expr)
@@ -179,6 +257,9 @@ defmodule SqlExpr do
       {:is_null, subexpr} ->
         val = eval(columns, row, subexpr)
         SqlValue.is_null?(val)
+      {:apply, fnname, arg_exprs} ->
+        args = Enum.map(arg_exprs, fn expr -> eval(columns, row, expr) end)
+        SqlValue.apply_function(fnname, args)
       {binary_op, left_expr, right_expr} ->
         left_val = eval(columns, row, left_expr)
         right_val = eval(columns, row, right_expr)

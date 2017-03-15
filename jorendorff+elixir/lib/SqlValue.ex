@@ -104,4 +104,28 @@ defmodule SqlValue do
   def from_string(:bool, "false"), do: false
   def from_string(:bool, "1"), do: true
   def from_string(:bool, "0"), do: false
+
+  def add(nil, _), do: nil
+  def add(_, nil), do: nil
+  def add(a, b) do
+    cond do
+      Decimal.decimal?(b) -> Decimal.add(a, b)
+      true -> a + b
+    end
+  end
+
+  def sum(values, type) do
+    start = case type do
+              :int -> 0
+              :num -> Decimal.new("0")
+            end
+    Enum.reduce(values, start, &add/2)
+  end
+
+  def apply_function("ROUND", [num]) do
+    Decimal.round(num, 0)
+  end
+  def apply_function("ROUND", [num, places]) do
+    Decimal.round(num, places)
+  end
 end

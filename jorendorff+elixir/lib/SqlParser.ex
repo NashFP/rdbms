@@ -137,12 +137,18 @@ defmodule SqlParser do
       [{:identifier, fnname}, :'(' | rest] ->
         fnname_up = String.upcase(fnname)
         {args, rest} = parse_exprs!(rest)
-        case fnname_up do
-          "COUNT" ->
-            if length(args) != 1 do
-              raise ArgumentError, message: "COUNT() function expects 1 argument, got #{length(args)}"
-            end
-          _ -> raise ArgumentError, message: "unrecognized function #{inspect(fnname)}"
+        expected_argc =
+          cond do
+            Enum.member?(["AVG", "COUNT", "MAX", "MIN", "SUM"], fnname_up) ->
+              [1]
+            fnname_up == "ROUND" ->
+              1..2
+            true ->
+              raise ArgumentError, message: "unrecognized function #{inspect(fnname)}"
+          end
+
+        if !Enum.member?(expected_argc, length(args)) do
+          raise ArgumentError, message: "#{fnname_up}() function expects #{expected_argc} argument(s), got #{length(args)}"
         end
         case rest do
           [:')' | rest] -> {{:apply, fnname_up, args}, rest}
