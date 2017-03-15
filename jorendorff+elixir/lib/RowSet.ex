@@ -21,6 +21,7 @@ defmodule RowSet do
            type = cond do
              String.ends_with?(name, "Id") -> :int
              String.ends_with?(name, "Price") -> :num
+             String.ends_with?(name, "Total") -> :num
              true -> :str
            end
            {index, table_name, name, type}
