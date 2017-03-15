@@ -20,8 +20,8 @@ defmodule SqlParser do
   """
   def tokenize(s) do
     token_re = ~r/(?:\s*)([0-9](?:\w|\.)*|\w+|'(?:[^']|'')*'|>=|<=|<>|.)(?:\s*)/
-    Regex.scan(token_re, s, capture: :all_but_first) |>
-      Enum.map(&match_to_token/1)
+    Regex.scan(token_re, s, capture: :all_but_first)
+    |> Enum.map(&match_to_token/1)
   end
 
   # Convert a single token regex match into a token.
@@ -112,14 +112,14 @@ defmodule SqlParser do
       ** (ArgumentError) identifier or literal expected
   """
   def parse_select_stmt!(sql) do
-    {%{}, tokenize(sql)} |>
-      parse_clause!(:select, &parse_exprs!/1, required: true) |>
-      parse_clause!(:from, &parse_tables!/1) |>
-      parse_clause!(:where, &parse_expr!/1) |>
-      parse_clause_2!(:group, :by, &parse_exprs!/1) |>
-      parse_clause!(:having, &parse_expr!/1) |>
-      parse_clause_2!(:order, :by, &parse_exprs!/1) |>
-      check_done!()
+    {%{}, tokenize(sql)}
+    |> parse_clause!(:select, &parse_exprs!/1, required: true)
+    |> parse_clause!(:from, &parse_tables!/1)
+    |> parse_clause!(:where, &parse_expr!/1)
+    |> parse_clause_2!(:group, :by, &parse_exprs!/1)
+    |> parse_clause!(:having, &parse_expr!/1)
+    |> parse_clause_2!(:order, :by, &parse_exprs!/1)
+    |> check_done!()
   end
 
   defp parse_exprs!(sql) do

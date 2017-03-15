@@ -24,10 +24,10 @@ defmodule TinyRdbmsTest do
         # information obtained by actually running the query. Since the CSV
         # file doesn't say anything about the column types, we can't check them.
         expected_answer =
-          Regex.scan(~r/    (.*\n)/, answer_str, capture: :all_but_first) |>
-          Enum.map(fn([line]) -> line end) |>
-          CSV.decode() |>
-          Enum.map(fn row -> Columns.row_from_strings(columns, row) end)
+          Regex.scan(~r/    (.*\n)/, answer_str, capture: :all_but_first)
+          |> Enum.map(fn([line]) -> line end)
+          |> CSV.decode()
+          |> Enum.map(fn row -> Columns.row_from_strings(columns, row) end)
 
         assert actual_answer == expected_answer
       end
