@@ -41,6 +41,7 @@ defmodule SqlParser do
       "having" -> :having
       "insert" -> :insert
       "is" -> :is
+      "limit" -> :limit
       "not" -> :not
       "null" -> :null
       "or" -> :or
@@ -102,7 +103,8 @@ defmodule SqlParser do
         where: {:=, {:identifier, "ArtistId"}, {:number, 252}},
         group: nil,
         having: nil,
-        order: [identifier: "Title"]
+        order: [identifier: "Title"],
+        limit: nil
       }
 
   Raises `ArgumentError` if the input string isn't a syntactically correct
@@ -119,6 +121,7 @@ defmodule SqlParser do
     |> parse_clause_2!(:group, :by, &parse_exprs!/1)
     |> parse_clause!(:having, &parse_expr!/1)
     |> parse_clause_2!(:order, :by, &parse_exprs!/1)
+    |> parse_clause!(:limit, &parse_expr!/1)
     |> check_done!()
   end
 

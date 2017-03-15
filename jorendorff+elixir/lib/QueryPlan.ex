@@ -182,6 +182,19 @@ defmodule QueryPlan do
         cols -> {:sort, cols, plan}
       end
 
+    # LIMIT clause
+    plan =
+      case ast.limit do
+        nil -> plan
+        {:number, n} ->
+          if is_integer(n) do
+            {:limit, n, plan}
+          else
+            raise ArgumentError, message: "invalid argument to LIMIT"
+          end
+        _ ->
+          raise ArgumentError, message: "invalid argument to LIMIT"
+      end
     # SELECT clause
     {:map, ast.select, plan}
   end
@@ -207,6 +220,8 @@ defmodule QueryPlan do
         run(database, subplan) |> RowSet.map(exprs)
       {:join, t1, c1, t2, c2} ->
         RowSet.join(run(database, t1), c1, run(database, t2), c2)
+      {:limit, n, plan} ->
+        RowSet.limit(run(database, plan), n)
     end
   end
 end

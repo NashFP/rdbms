@@ -164,4 +164,9 @@ defmodule RowSet do
     end)
     new(columns, sorted_rows)
   end
+
+  # Apply LIMIT clause to the result set.
+  def limit({:RowSet, columns, rows, _}, n) do
+    new(columns, Enum.take(rows, n))
+  end
 end
