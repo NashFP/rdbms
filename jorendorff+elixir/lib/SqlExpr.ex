@@ -209,6 +209,19 @@ defmodule SqlExpr do
       {:is_null, subexpr} ->
         subexpr_ex = compile_expr(columns, row, subexpr)
         quote(do: unquote(SqlValue).is_null?(unquote(subexpr_ex)))
+      {:apply, "ROUND", args} ->
+        {num_expr, places_expr} =
+          case args do
+            [n] -> {n, {:number, 0}}
+            [n, p] -> {n, p}
+          end
+        num_ex = compile_expr(columns, row, num_expr)
+        places_ex = compile_expr(columns, row, places_expr)
+        if places_ex == 0 do
+          quote(do: unquote(SqlValue).round(unquote(num_ex)))
+        else
+          quote(do: unquote(SqlValue).round(unquote(num_ex), unquote(places_ex)))
+        end
       {binary_op, left_expr, right_expr} ->
         left_ex = compile_expr(columns, row, left_expr)
         right_ex = compile_expr(columns, row, right_expr)
