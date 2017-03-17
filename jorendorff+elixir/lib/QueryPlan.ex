@@ -175,11 +175,35 @@ defmodule QueryPlan do
         {plan_so_far, tables_so_far, remaining_conds}
       end)
 
+    # GROUP BY and HAVING clauses
+    aggregate =
+      ast.group != nil || Enum.any?(ast.select, &SqlExpr.is_aggregate?/1)
+    plan =
+      case ast.group do
+        nil ->
+          if aggregate do
+            {:group_1, plan}
+          else
+            plan
+          end
+        cols ->
+          plan = {:group_by, cols, plan}
+          case ast.having do
+            nil -> plan
+            expr -> {:group_filter, expr, plan}
+          end
+      end
+
     # ORDER BY clause
     plan =
       case ast.order do
         nil -> plan
-        cols -> {:sort, cols, plan}
+        cols ->
+          if aggregate do
+            {:sort_groups, cols, plan}
+          else
+            {:sort, cols, plan}
+          end
       end
 
     # LIMIT clause
@@ -195,8 +219,13 @@ defmodule QueryPlan do
         _ ->
           raise ArgumentError, message: "invalid argument to LIMIT"
       end
+
     # SELECT clause
-    {:map, ast.select, plan}
+    if aggregate do
+      {:aggregate, ast.select, plan}
+    else
+      {:map, ast.select, plan}
+    end
   end
 
   def run(database, plan) do
@@ -214,10 +243,20 @@ defmodule QueryPlan do
         TinyRdbms.table!(database, t)
         |> RowSet.apply_alias(a)
         |> RowSet.filter_by_index(c, v)
+      {:group_1, subplan} ->
+        run(database, subplan) |> RowSet.group_1()
+      {:group_by, cols, subplan} ->
+        run(database, subplan) |> RowSet.group_by(cols)
+      {:group_filter, expr, subplan} ->
+        run(database, subplan) |> RowGroups.filter(expr)
       {:sort, cols, subplan} ->
         run(database, subplan) |> RowSet.order_by(cols)
+      {:sort_groups, cols, subplan} ->
+        run(database, subplan) |> RowSet.order_groups_by(cols)
       {:map, exprs, subplan} ->
         run(database, subplan) |> RowSet.map(exprs)
+      {:aggregate, exprs, subplan} ->
+        run(database, subplan) |> RowSet.aggregate(exprs)
       {:join, t1, c1, t2, c2} ->
         RowSet.join(run(database, t1), c1, run(database, t2), c2)
       {:limit, n, plan} ->

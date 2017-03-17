@@ -1,5 +1,14 @@
 defmodule RowSet do
-  @moduledoc "Rows of data (tuples), plus column metadata and optional indexes."
+  @moduledoc """
+  Rows of data (tuples), plus column metadata and optional indexes.
+
+  A RowSet may be either plain or grouped.
+  If it's plain, it's basically a list of tuples, plus metadata.
+  If it's grouped, it's a list of groups (lists of tuples), plus metadata.
+
+  Plain RowSets can be converted to grouped RowSets using group_1() or group_by().
+  Grouped RowSets can be converted to plain RowSets using aggregate().
+  """
 
   def new(columns, rows, indexes \\ %{}) do
     {:RowSet, columns, rows, indexes}
@@ -139,19 +148,31 @@ defmodule RowSet do
       |> Columns.new()
 
     projected_rows =
-      if Enum.any?(exprs, &SqlExpr.is_aggregate?/1) do
-        # Implicitly group all rows into one big group, if selecting an aggregate.
-        [
-          Enum.map(exprs, fn(expr) -> SqlExpr.eval_aggregate(columns, rows, expr) end)
-          |> List.to_tuple()
-        ]
-      else
-        Enum.map(rows, fn(row) ->
-          # For each row, evaluate each selected expression.
-          Enum.map(exprs, fn(expr) -> SqlExpr.eval(columns, row, expr) end)
-          |> List.to_tuple()
-        end)
+      Enum.map(rows, fn(row) ->
+        # For each row, evaluate each selected expression.
+        Enum.map(exprs, fn(expr) -> SqlExpr.eval(columns, row, expr) end)
+        |> List.to_tuple()
+      end)
+
+    new(selected_columns, projected_rows)
+  end
+
+  # Evaluate SELECT clause on a grouped rowset.
+  #
+  # A plain map() can't use aggregate functions like COUNT and SUM; this can.
+  def aggregate({:RowSet, columns, groups, _}, exprs) do
+    selected_columns =
+      exprs
+      |> Enum.with_index()
+      |> Enum.map(fn {expr, index} -> SqlExpr.column_info(expr, columns, index) end)
+      |> Columns.new()
+
+    projected_rows =
+      for rows <- groups do
+        Enum.map(exprs, fn(expr) -> SqlExpr.eval_aggregate(columns, rows, expr) end)
+        |> List.to_tuple()
       end
+
     new(selected_columns, projected_rows)
   end
 
@@ -165,8 +186,39 @@ defmodule RowSet do
     new(columns, sorted_rows)
   end
 
+  # Apply ORDER BY clause to the groups in a grouped result set.
+  def order_groups_by({:RowSet, columns, groups, _}, order) do
+    sorted_rows = Enum.sort_by(groups, fn group ->
+      Enum.map(order, fn expr ->
+        SqlExpr.eval_aggregate(columns, group, expr)
+      end)
+    end)
+    new(columns, sorted_rows)
+  end
+
   # Apply LIMIT clause to the result set.
+  #
+  # Works on both regular and grouped result sets.
   def limit({:RowSet, columns, rows, _}, n) do
     new(columns, Enum.take(rows, n))
+  end
+
+  # Perform a trivial GROUP operation, putting the all rows in a single group.
+  def group_1({:RowSet, columns, rows, _}) do
+    new(columns, [rows])
+  end
+
+  # Apply GROUP BY clause, collecting rows into groups.
+  #
+  # The result is a grouped RowSet; the "rows" element is a list of groups,
+  # which are lists of tuples.
+  def group_by({:RowSet, columns, rows, _}, exprs) do
+    groups =
+      Enum.group_by(rows, fn row ->
+        Enum.map(exprs, fn expr -> SqlExpr.eval(columns, row, expr) end)
+        |> List.to_tuple()
+      end)
+      |> Map.values()
+    new(columns, groups)
   end
 end
