@@ -120,6 +120,7 @@ defmodule SqlParser do
     |> parse_clause!(:where, &parse_expr!/1)
     |> parse_clause_2!(:group, :by, &parse_exprs!/1)
     |> parse_clause!(:having, &parse_expr!/1)
+    |> check_having_without_group!()
     |> parse_clause_2!(:order, :by, &parse_exprs!/1)
     |> parse_clause!(:limit, &parse_expr!/1)
     |> check_done!()
@@ -244,6 +245,13 @@ defmodule SqlParser do
       _ ->
         {Map.put(ast, kw1, :nil), sql}
     end
+  end
+
+  defp check_having_without_group!({ast, sql}) do
+    if ast.group == nil && ast.having != nil do
+      raise ArgumentError, message: "a GROUP BY clause is required before HAVING"
+    end
+    {ast, sql}
   end
 
   defp check_done!({ast, sql}) do
