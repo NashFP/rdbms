@@ -173,7 +173,22 @@ defmodule SqlExpr do
             args = Enum.map(arg_exprs, fn expr -> eval_aggregate(columns, group, expr) end)
             apply(SqlValue, :round, args)
         end
+
       _ ->
+        # If expr isn't obviously an aggregate, just pick an arbitrary row from the group
+        # and evaluate it as a normal expression. Two issues here:
+        #
+        # *   This fails to handle compound expressions that *contain* aggregates
+        #     as subexpressions. Oops.
+        #
+        # *   This behavior too permissive; it allows nonsensical queries like
+        #     `SELECT Name, COUNT(*) FROM Track` (returning a single row!) or
+        #     `SELECT Name FROM Track GROUP BY UnitPrice`. I'd rather allow
+        #     selecting only the `GROUP BY` columns themselves and other
+        #     expressions that are uniquely determined by those values (such as
+        #     a table's other columns, when we have grouped by its primary key
+        #     column). But Sqlite does something very much like this. I don't
+        #     know what the SQL standard or other databases say.
         eval(columns, hd(group), expr)
     end
   end
