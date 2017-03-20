@@ -307,6 +307,26 @@ defmodule SqlExpr do
   end
 
   @doc """
+  Evaluate several expressions for the same row of data.
+
+  `exprs` is a list of SqlExprs. Returns a tuple with one value per expr.
+  """
+  def eval_several(exprs, columns, row) do
+    Enum.map(exprs, &SqlExpr.eval(columns, row, &1))
+    |> List.to_tuple()
+  end
+
+  @doc """
+  Evaluate several aggregate expressions for the same group of rows.
+
+  `exprs` is a list of SqlExprs. Returns a tuple with one value per expr.
+  """
+  def eval_aggregate_several(exprs, columns, group) do
+    Enum.map(exprs, &SqlExpr.eval_aggregate(columns, group, &1))
+    |> List.to_tuple()
+  end
+
+  @doc """
   Break a boolean expression into a list of conditions which must all be met.
 
   If the argument is an AND expression, return a list of the operands of AND.

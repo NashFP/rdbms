@@ -147,12 +147,8 @@ defmodule RowSet do
       |> Enum.map(fn {expr, index} -> SqlExpr.column_info(expr, columns, index) end)
       |> Columns.new()
 
-    projected_rows =
-      Enum.map(rows, fn(row) ->
-        # For each row, evaluate each selected expression.
-        Enum.map(exprs, fn(expr) -> SqlExpr.eval(columns, row, expr) end)
-        |> List.to_tuple()
-      end)
+    # For each row, evaluate all exprs.
+    projected_rows = Enum.map(rows, &SqlExpr.eval_several(exprs, columns, &1))
 
     new(selected_columns, projected_rows)
   end
@@ -167,32 +163,20 @@ defmodule RowSet do
       |> Enum.map(fn {expr, index} -> SqlExpr.column_info(expr, columns, index) end)
       |> Columns.new()
 
-    projected_rows =
-      for rows <- groups do
-        Enum.map(exprs, fn(expr) -> SqlExpr.eval_aggregate(columns, rows, expr) end)
-        |> List.to_tuple()
-      end
+    projected_rows = Enum.map(groups, &SqlExpr.eval_aggregate_several(exprs, columns, &1))
 
     new(selected_columns, projected_rows)
   end
 
   # Apply ORDER BY clause to the result set.
   def order_by({:RowSet, columns, rows, _}, order) do
-    sorted_rows = Enum.sort_by(rows, fn row ->
-      Enum.map(order, fn expr ->
-        SqlExpr.eval(columns, row, expr)
-      end)
-    end)
+    sorted_rows = Enum.sort_by(rows, &SqlExpr.eval_several(order, columns, &1))
     new(columns, sorted_rows)
   end
 
   # Apply ORDER BY clause to the groups in a grouped result set.
   def order_groups_by({:RowSet, columns, groups, _}, order) do
-    sorted_rows = Enum.sort_by(groups, fn group ->
-      Enum.map(order, fn expr ->
-        SqlExpr.eval_aggregate(columns, group, expr)
-      end)
-    end)
+    sorted_rows = Enum.sort_by(groups, &SqlExpr.eval_aggregate_several(order, columns, &1))
     new(columns, sorted_rows)
   end
 
@@ -214,10 +198,7 @@ defmodule RowSet do
   # which are lists of tuples.
   def group_by({:RowSet, columns, rows, _}, exprs) do
     groups =
-      Enum.group_by(rows, fn row ->
-        Enum.map(exprs, fn expr -> SqlExpr.eval(columns, row, expr) end)
-        |> List.to_tuple()
-      end)
+      Enum.group_by(rows, &SqlExpr.eval_several(exprs, columns, &1))
       |> Map.values()
     new(columns, groups)
   end
