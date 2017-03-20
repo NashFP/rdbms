@@ -247,8 +247,8 @@ defmodule QueryPlan do
         run(database, subplan) |> RowSet.group_1()
       {:group_by, cols, subplan} ->
         run(database, subplan) |> RowSet.group_by(cols)
-      {:group_filter, expr, subplan} ->
-        run(database, subplan) |> RowGroups.filter(expr)
+      ## {:group_filter, expr, subplan} ->
+      ##   run(database, subplan) |> RowSet.filter_groups(expr)
       {:sort, cols, subplan} ->
         run(database, subplan) |> RowSet.order_by(cols)
       {:sort_groups, cols, subplan} ->
