@@ -16,6 +16,7 @@ Some of the pieces to tackle:
 * https://en.wikipedia.org/wiki/SQL
 * https://dev.mysql.com/doc/employee/en/sakila-structure.html
 * http://www.w3schools.com/sql/sql_syntax.asp
+* ACID https://en.wikipedia.org/wiki/ACID
 
 ## How to get started
 
