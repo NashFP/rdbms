@@ -22,7 +22,7 @@ defmodule RowSet do
   def rows({:RowSet, _, rows, _}), do: rows
 
   def load!(table_name, filename) do
-    raw_rows = File.stream!(filename) |> CSV.decode() |> Enum.to_list
+    raw_rows = File.stream!(filename) |> CSV.decode!() |> Enum.to_list
     columns = hd(raw_rows)
       |> Enum.with_index()
       |> Enum.map(fn {name, index} ->

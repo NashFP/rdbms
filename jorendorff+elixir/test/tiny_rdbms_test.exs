@@ -26,7 +26,7 @@ defmodule TinyRdbmsTest do
         expected_answer =
           Regex.scan(~r/    (.*\n)/, answer_str, capture: :all_but_first)
           |> Enum.map(fn([line]) -> line end)
-          |> CSV.decode()
+          |> CSV.decode!()
           |> Enum.map(fn row -> Columns.row_from_strings(columns, row) end)
 
         assert actual_answer == expected_answer

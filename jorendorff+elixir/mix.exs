@@ -29,8 +29,8 @@ defmodule TinyRdbms.Mixfile do
   # Type "mix help deps" for more examples and options
   defp deps do
     [
-      {:csv, "~> 1.4.2"},
-      {:decimal, "~> 1.3"}
+      {:csv, "~> 3.2.1"},
+      {:decimal, "~> 2.1.1"}
     ]
   end
 end

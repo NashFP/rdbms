@@ -6,6 +6,8 @@ defmodule SqlValue do
   somewhere.
   """
 
+  require Decimal
+
   @doc """
   True if `v` is a null value.
 
@@ -109,7 +111,7 @@ defmodule SqlValue do
   def add(_, nil), do: nil
   def add(a, b) do
     cond do
-      Decimal.decimal?(b) -> Decimal.add(a, b)
+      Decimal.is_decimal(b) -> Decimal.add(a, b)
       true -> a + b
     end
   end

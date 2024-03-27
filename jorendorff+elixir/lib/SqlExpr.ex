@@ -1,6 +1,8 @@
 defmodule SqlExpr do
   @moduledoc "Functions that inspect, compile, and evaluate parsed SQL expressions."
 
+  require Decimal
+
   @doc """
   True if the expression is an aggregate (like `COUNT(*)`).
 
@@ -73,7 +75,7 @@ defmodule SqlExpr do
         type =
           case expr do
             {:number, x} ->
-              if Decimal.decimal? x do
+              if Decimal.is_decimal x do
                 :num
               else
                 :int
@@ -215,7 +217,7 @@ defmodule SqlExpr do
         key = {:., String.downcase(t), String.downcase(c)}
         compile_column_ref(columns, row, key)
       {:number, n} ->
-        if Decimal.decimal?(n) do
+        if Decimal.is_decimal(n) do
           quote(do: unquote(Decimal).new(unquote(Decimal.to_string(n))))
         else
           n
