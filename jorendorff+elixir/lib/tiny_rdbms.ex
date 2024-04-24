@@ -7,7 +7,7 @@ defmodule TinyRdbms do
     File.ls!(dir)
       |> Enum.filter(fn(f) -> String.ends_with?(f, ".csv") end)
       |> Enum.map(fn(f) ->
-        table_name = String.downcase(String.slice(f, 0..-5))
+        table_name = String.downcase(Path.basename(f, ".csv"))
         {table_name,
          RowSet.load!(table_name, Path.join(dir, f))}
       end)
