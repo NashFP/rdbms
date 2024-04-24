@@ -207,6 +207,8 @@ defmodule SqlParser do
     case sql do
       [{:identifier, table_name}, {:identifier, alias_name} | rest] ->
         {{:alias, table_name, alias_name}, rest}
+      [{:identifier, table_name}, :as, {:identifier, alias_name} | rest] ->
+        {{:alias, table_name, alias_name}, rest}
       [{:identifier, table_name} | rest] ->
         {table_name, rest}
       _ -> raise ArgumentError, message: "table name expected"
